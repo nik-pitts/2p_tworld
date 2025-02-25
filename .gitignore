@@ -1,0 +1,5 @@
+*.txt
+model/archive/
+colab/wandb/
+.idea/
+__pycache__/
