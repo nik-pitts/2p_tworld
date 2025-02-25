@@ -47,10 +47,6 @@ class Player:
         self.image = self.sprites["DOWN"]
 
     def process_move(self, dx, dy):
-        """
-        dx, dy를 받아서 이동 처리, 타일 효과 적용, 충돌 감지, 스프라이트 업데이트를 수행.
-        이 메소드는 인간 플레이어와 AI 에이전트 모두에서 재사용됩니다.
-        """
         new_x, new_y = self.x + dx, self.y + dy
         tile = self.tile_world.get_tile(new_x, new_y)
 
@@ -159,4 +155,7 @@ class Player:
         }
 
     def draw(self, screen):
-        screen.blit(self.image, (self.x * self.tile_size, self.y * self.tile_size))
+        screen.blit(
+            self.image,
+            (self.x * self.tile_size, (self.y + settings.TOP_UI_SIZE) * self.tile_size),
+        )

@@ -83,6 +83,7 @@ class TileWorld:
         self.width = 0  # Width of the level
         self.height = 0  # Height of the level
         self.board = []  # Reset board
+        self.collectable_list = []  # Reset collectable list
 
     def load_level(self, level_index):
         self.reset_level_state()
@@ -97,6 +98,7 @@ class TileWorld:
         self.total_chips = level_data["numberOfChips"]
         self.level_time = level_data["time"]
         self.hint = level_data["hintText"]
+        self.lower_layer = level_data["lowerLayer"]
         self.width = settings.MAP_SIZE  # Dynamically set width
         self.height = settings.MAP_SIZE  # Dynamically set height
 
@@ -104,6 +106,7 @@ class TileWorld:
         self.board = [[None for _ in range(self.width)] for _ in range(self.height)]
         self.player_positions = []  # Reset player positions
         self.initialize_tiles(level_data["upperLayer"])  # Populate tiles
+        ##self.initialize_tiles(level_data["lowerLayer"])  # Populate tiles
 
         print(
             f"Loaded Level {level_index + 1}: {level_data['map_title']} (Chips Required: {self.total_chips}, Time: {self.level_time}s)"
@@ -111,6 +114,8 @@ class TileWorld:
 
     def initialize_tiles(self, upper_layer):
         """Process and set up tiles based on level data."""
+        self.collectable_list = []
+
         for y in range(self.height):
             for x in range(self.width):
                 tile_id = upper_layer[y * self.width + x]
@@ -120,8 +125,9 @@ class TileWorld:
                     tile_id = 0  # Convert player start tile to floor
 
                 if tile_id in TILE_MAPPING:
-                    tile_type, walkable, sprite_index, effect = TILE_MAPPING[tile_id]
-
+                    tile_type, walkable, sprite_index, effect, collectable = (
+                        TILE_MAPPING[tile_id]
+                    )
                     # Store chip positions
                     if tile_type == "CHIP":
                         self.chip_positions.append((x, y))
@@ -137,6 +143,9 @@ class TileWorld:
                             tile_type, walkable, effect, self.sprite_sheet, sprite_index
                         ),
                     )
+
+                if collectable:
+                    self.collectable_list.append((x, y))
 
     def next_level(self):
         """Load the next level"""
@@ -168,7 +177,7 @@ class TileWorld:
 
     def find_nearest_chip(self, player_x, player_y, target_type):
         if target_type == "CHIP":
-            if self.collected_chips == self.total_chips:
+            if not self.chip_positions or self.collected_chips == self.total_chips:
                 return (-1, -1)  # All chips collected, no chips left
             # Find the closest chip using index difference
             nearest_chip = min(
@@ -185,6 +194,19 @@ class TileWorld:
         )
 
     def draw(self, screen):
+        # draw lower layer
+        for tile in self.lower_layer:
+            x, y = tile[1], tile[0]
+            sprite = self.sprite_sheet.get_tile(0, 0)
+            screen.blit(
+                sprite,
+                (
+                    x * self.sprite_sheet.tile_size,
+                    (y + settings.TOP_UI_SIZE) * self.sprite_sheet.tile_size,
+                ),
+            )
+
+        # draw upper layer
         for y in range(self.height):
             for x in range(self.width):
                 tile = self.get_tile(x, y)
@@ -194,6 +216,6 @@ class TileWorld:
                         sprite,
                         (
                             x * self.sprite_sheet.tile_size,
-                            y * self.sprite_sheet.tile_size,
+                            (y + settings.TOP_UI_SIZE) * self.sprite_sheet.tile_size,
                         ),
                     )

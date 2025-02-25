@@ -17,7 +17,7 @@ class Game:
             settings.TILE_SHEET_PATH, settings.TILE_SIZE
         )
         self.tile_world = TileWorld(settings.LEVEL_DATA_PATH, self.tile_sprite_sheet)
-        self.load_game(next_level=False)
+        self.load_game(next_level=True)
 
     def load_game(self, next_level=False):
         if next_level:
@@ -42,25 +42,25 @@ class Game:
             record=False,
         )
 
-        self.player2 = Player(
-            player_positions[1][0],
-            player_positions[1][1],
-            self.tile_world,
-            2,
-            record=True,
-        )
+        # self.player2 = Player(
+        #     player_positions[1][0],
+        #     player_positions[1][1],
+        #     self.tile_world,
+        #     2,
+        #     record=True,
+        # )
 
         # self.player2 = RuleBasedAgent(
         #     player_positions[0][0], player_positions[0][1], self.tile_world, 2
         # )
 
-        # self.player2 = BehaviorClonedAgent(
-        #     player_positions[1][0],
-        #     player_positions[1][1],
-        #     self.tile_world,
-        #     2,
-        #     "./model/lv1_bc_model_6.0.pth",
-        # )
+        self.player2 = BehaviorClonedAgent(
+            player_positions[1][0],
+            player_positions[1][1],
+            self.tile_world,
+            2,
+            "./model/lv1_bc_model_6.0.pth",
+        )
 
         # UI
         self.ui = GameUI(self.tile_world, self.player1, self.player2, self)
@@ -82,9 +82,10 @@ class Game:
     def run(self):
         """Mian game loop"""
         while self.running:
-            self.screen.fill((0, 0, 0))  # 화면 초기화
+            bg_image = pygame.image.load("./res/backgroundimg.png")
+            self.screen.blit(bg_image, (0, 0))
 
-            # 🔹 이벤트 처리
+            # Event handling
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
@@ -92,15 +93,15 @@ class Game:
                     pygame.quit()
                     exit()
                 elif event.type == pygame.KEYDOWN:
-                    # self.player1.move(event)
-                    self.player2.move(event)
+                    self.player1.move(event)
+                    # self.player2.move(event)
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     print(f"Mouse xClick at {event.pos}")
                     self.ui.handle_click(event)
 
             # when P2 is an agent uncomment the following lines
-            # if not self.player2.exited:
-            #     self.player2.step()
+            if not self.player2.exited:
+                self.player2.step()
 
             # Tilemap + player
             self.tile_world.draw(self.screen)
