@@ -23,9 +23,16 @@ class GameUI:
         self.inventory_p2 = []
 
         self.replay_button = pygame.Rect(
-            settings.TILE_SIZE * (settings.MAP_SIZE + settings.TOP_UI_SIZE) // 2 - 75,
-            settings.HEIGHT // 2,
-            150,
+            settings.TILE_SIZE * (settings.MAP_SIZE + settings.TOP_UI_SIZE) // 2 - 150,
+            settings.HEIGHT // 2 + 50,
+            300,
+            50,
+        )
+
+        self.nextlv_button = pygame.Rect(
+            settings.TILE_SIZE * (settings.MAP_SIZE + settings.TOP_UI_SIZE) // 2 - 150,
+            settings.HEIGHT // 2 - 50,
+            300,
             50,
         )
 
@@ -70,14 +77,6 @@ class GameUI:
         # Player 2 Inventory
         self.draw_text(screen, "P2 Inventory", start_y_offset + 470)
         self.draw_inventory_box(screen, start_y_offset + 500, self.inventory_p2)
-
-        if self.player1.exited or self.player2.exited:
-            pygame.draw.rect(screen, (0, 0, 0), self.replay_button)
-            font = pygame.font.Font(None, 50)
-            text_surface = font.render("Replay", True, (255, 255, 255))
-            screen.blit(
-                text_surface, (self.replay_button.x + 15, self.replay_button.y + 5)
-            )
 
         if self.popup_active:
             self.draw_popup_menu(screen)
@@ -154,7 +153,7 @@ class GameUI:
 
     def draw_inventory_items(self, screen, x, y, inventory, tile_size):
         for index, item in enumerate(inventory):
-            row, col = divmod(index, 8)
+            row, col = divmod(index, 4)  # 4 items per row
             sprite = item.get_sprite()
             if sprite:
                 screen.blit(
@@ -162,11 +161,14 @@ class GameUI:
                     (x + col * tile_size, y + row * tile_size),
                 )
 
-    def update_inventory(self, player, item):
+    def update_inventory(self, player, item, item_pos):
         if player.player_id == 1:
             self.inventory_p1.append(item)
         else:
             self.inventory_p2.append(item)
+
+        if item_pos in self.item_assignments:
+            del self.item_assignments[item_pos]
 
     def show_hint(self, hint):
         self.hint_text = hint
@@ -175,8 +177,12 @@ class GameUI:
         self.hint_text = ""
 
     def handle_click(self, event):
-        if self.replay_button.collidepoint(event.pos):
-            self.game.restart_game()
+        if self.game.pause:
+            if self.replay_button.collidepoint(event.pos):
+                self.game.load_game(next_level=False)
+
+            if self.nextlv_button.collidepoint(event.pos):
+                self.game.load_game(next_level=True)
 
         if event.button == 3:  # Right-click
             x, y = event.pos
@@ -300,11 +306,14 @@ class GameUI:
         selected_index = (position[1] - popup_y) // option_height
 
         if self.popup_item in self.tile_world.collectable_list:
+            tile = self.tile_world.get_tile(self.popup_item[0], self.popup_item[1])
+            sprite = tile.get_sprite()
+
             if selected_index == 0:  # Assign to Player 1
-                self.item_assignments[self.popup_item] = 1
+                self.item_assignments[self.popup_item] = (1, sprite)
                 self.tile_world.collectable_list.remove(self.popup_item)
             elif selected_index == 1:  # Assign to Player 2
-                self.item_assignments[self.popup_item] = 2
+                self.item_assignments[self.popup_item] = (2, sprite)
                 self.tile_world.collectable_list.remove(self.popup_item)
 
         elif self.popup_item in self.item_assignments:
@@ -337,8 +346,11 @@ class GameUI:
         x_offset = box_x + 4  # Start inside the box
         y_offset = box_y + 4  # Center items vertically in the box
 
-        for x, y in self.tile_world.collectable_list:
-            tile = self.tile_world.get_tile(x, y)
+        for item_pos in self.tile_world.collectable_list:
+            if item_pos in self.item_assignments:  # ✅ Skip assigned items
+                continue
+
+            tile = self.tile_world.get_tile(item_pos[0], item_pos[1])
             sprite = tile.get_sprite()
 
             if sprite:
@@ -379,10 +391,7 @@ class GameUI:
         x_offset_p2 = box_x + box_width + 24  # Start inside the box
         y_offset = box_y + 4  # Center items vertically in the box
 
-        for item_pos, player_id in self.item_assignments.items():
-            tile = self.tile_world.get_tile(item_pos[0], item_pos[1])
-            sprite = tile.get_sprite()
-
+        for item_pos, (player_id, sprite) in self.item_assignments.items():
             if sprite:
                 # Scale sprite to half size
                 scaled_sprite = pygame.transform.scale(
@@ -395,3 +404,15 @@ class GameUI:
                 else:  # 🔹 Player 2 Assignment
                     screen.blit(scaled_sprite, (x_offset_p2, y_offset))
                     x_offset_p2 += item_spacing  # Move right for next item
+
+    def show_replay_button(self, screen):
+        pygame.draw.rect(screen, (0, 0, 0), self.replay_button)
+        font = pygame.font.Font("./res/font/Redpixel-8Mqz2.ttf", 50)
+        text_surface = font.render("Replay", True, (255, 255, 255))
+        screen.blit(text_surface, (self.replay_button.x + 80, self.replay_button.y + 5))
+
+    def show_nextlv_button(self, screen):
+        pygame.draw.rect(screen, (0, 0, 0), self.nextlv_button)
+        font = pygame.font.Font("./res/font/Redpixel-8Mqz2.ttf", 50)
+        text_surface = font.render("Next Level", True, (255, 255, 255))
+        screen.blit(text_surface, (self.nextlv_button.x + 25, self.nextlv_button.y + 5))

@@ -1,8 +1,8 @@
-from collections import deque
 import json
 import pygame
 from src.tile_definitions import TILE_MAPPING
 import src.settings as settings
+from src.monster import Beetle
 
 
 class Tile:
@@ -63,10 +63,6 @@ class TileWorld:
         self.chip_positions = []
         self.exit_position = None
 
-        # Initialize game state
-        self.reset_level_state()
-        self.load_level(self.level_index)
-
     def load_level_data(self):
         """Load all levels from the JSON file"""
         with open(self.level_file, "r") as f:
@@ -99,6 +95,7 @@ class TileWorld:
         self.level_time = level_data["time"]
         self.hint = level_data["hintText"]
         self.lower_layer = level_data["lowerLayer"]
+        self.beetle_positions = {}
         self.width = settings.MAP_SIZE  # Dynamically set width
         self.height = settings.MAP_SIZE  # Dynamically set height
 
@@ -106,7 +103,6 @@ class TileWorld:
         self.board = [[None for _ in range(self.width)] for _ in range(self.height)]
         self.player_positions = []  # Reset player positions
         self.initialize_tiles(level_data["upperLayer"])  # Populate tiles
-        ##self.initialize_tiles(level_data["lowerLayer"])  # Populate tiles
 
         print(
             f"Loaded Level {level_index + 1}: {level_data['map_title']} (Chips Required: {self.total_chips}, Time: {self.level_time}s)"
@@ -115,6 +111,7 @@ class TileWorld:
     def initialize_tiles(self, upper_layer):
         """Process and set up tiles based on level data."""
         self.collectable_list = []
+        self.beetles = []  # This will hold dynamic Beetle objects
 
         for y in range(self.height):
             for x in range(self.width):
@@ -128,14 +125,32 @@ class TileWorld:
                     tile_type, walkable, sprite_index, effect, collectable = (
                         TILE_MAPPING[tile_id]
                     )
+
                     # Store chip positions
                     if tile_type == "CHIP":
+                        chip_id = len(self.chip_positions) + 1
                         self.chip_positions.append((x, y))
 
                     # Store exit position
                     if tile_type == "EXIT":
                         self.exit_position = (x, y)
 
+                    # If this tile represents a beetle...
+                    if effect and effect.startswith("BEETLE_"):
+                        direction = effect.split("_")[1]  # e.g., "NORTH"
+                        print("🪲 Beetle added at", x, y, "moving", direction)
+
+                        # Create a Beetle object and add it to self.beetles
+                        beetle = Beetle(x, y, self, direction)
+                        self.beetles.append(beetle)
+
+                        # Replace this tile with a FLOOR tile so the static tilemap has no beetle.
+                        self.set_tile(
+                            x, y, Tile("FLOOR", True, None, self.sprite_sheet, (0, 0))
+                        )
+                        continue  # Skip normal tile processing
+
+                    # Otherwise, set the tile normally
                     self.set_tile(
                         x,
                         y,
@@ -157,6 +172,12 @@ class TileWorld:
         print(f"🔹 Chips collected: {self.collected_chips}/{self.total_chips}")
         if self.collected_chips >= self.total_chips:
             self.unlock_socket()
+
+    def collect_key(self, key_color, player):
+        """Track when a player collects a key"""
+        # Set the corresponding key in the player's inventory
+        player.keys[key_color] = True
+        print(f"🔑 Player {player.player_id} collected a {key_color} key!")
 
     def unlock_socket(self):
         self.socket_unlocked = True
@@ -219,3 +240,12 @@ class TileWorld:
                             (y + settings.TOP_UI_SIZE) * self.sprite_sheet.tile_size,
                         ),
                     )
+
+        for beetle in self.beetles:
+            beetle.draw(screen)
+
+    def remove_collectable(self, x, y):
+        """Remove a collected item from the collectable_list"""
+        if (x, y) in self.collectable_list:
+            self.collectable_list.remove((x, y))
+            print(f"Item at ({x}, {y}) removed from collectable list")

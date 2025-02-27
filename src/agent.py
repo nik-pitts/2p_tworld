@@ -227,8 +227,8 @@ class TreeBasedAgent(Player):
 
 
 class BehaviorClonedAgent(Player):
-    def __init__(self, x, y, tile_world, player_id, model_path):
-        super().__init__(x, y, tile_world, player_id)
+    def __init__(self, x, y, tile_world, game, player_id, model_path):
+        super().__init__(x, y, tile_world, game, player_id)
 
         # Import the pre-trained Behavior Cloning model
         self.model = self.load_model(model_path)
