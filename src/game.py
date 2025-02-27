@@ -14,6 +14,7 @@ class Game:
         self.clock = pygame.time.Clock()
         self.running = True
         self.pause = False
+        self.op_time_enabled = False
 
         # Load background once instead of every frame
         self.background_image = pygame.image.load("./res/backgroundimg.png")
@@ -25,7 +26,7 @@ class Game:
         self.tile_world = TileWorld(settings.LEVEL_DATA_PATH, self.tile_sprite_sheet)
 
         # Load game
-        self.load_game(next_level=True)
+        self.load_game(next_level=False)
 
     def load_game(self, next_level=False):
         """Loads a new level or restarts the game."""
@@ -35,6 +36,7 @@ class Game:
             self.tile_world.level_index = self.tile_world.level_index
 
         self.pause = False
+        self.op_time_enabled = False
         self.tile_world.load_level(self.tile_world.level_index)
 
         # Load player positions
@@ -116,7 +118,11 @@ class Game:
                     self.ui.handle_click(event)
 
                 # Block player input when paused or being forced
-                if not self.pause and not self.player1.is_being_forced:
+                if (
+                    not self.pause
+                    and not self.player1.is_being_forced
+                    and not self.op_time_enabled
+                ):
                     if event.type == pygame.KEYDOWN:
                         self.player1.move(event)
 
@@ -127,7 +133,7 @@ class Game:
             self.player1.draw(self.screen)
             self.player2.draw(self.screen)
 
-            if not self.pause:
+            if not self.pause and not self.op_time_enabled:
                 # Check for and update player movement animations
                 player1_animated = (
                     self.player1.update_forced_movement()
@@ -162,10 +168,12 @@ class Game:
 
                 # Check for level completion
                 self.check_level_complete()
-            else:
+            elif not self.op_time_enabled:
                 # Show Replay and Next Level buttons when paused
                 self.ui.show_replay_button(self.screen)
                 self.ui.show_nextlv_button(self.screen)
+            else:
+                self.ui.show_resume_button(self.screen)
 
             # Always update UI
             self.ui.update_ui(self.screen)

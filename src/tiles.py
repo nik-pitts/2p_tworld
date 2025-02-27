@@ -128,7 +128,6 @@ class TileWorld:
 
                     # Store chip positions
                     if tile_type == "CHIP":
-                        chip_id = len(self.chip_positions) + 1
                         self.chip_positions.append((x, y))
 
                     # Store exit position

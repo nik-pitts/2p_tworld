@@ -17,6 +17,7 @@ class GameUI:
 
         self.start_time = pygame.time.get_ticks()
         self.hint_text = ""
+        self.op_time_text = "OPTIME"
 
         # Inventory per player
         self.inventory_p1 = []
@@ -35,6 +36,22 @@ class GameUI:
             300,
             50,
         )
+
+        self.op_button = pygame.Rect(
+            settings.TILE_SIZE * settings.MAP_SIZE + 20,
+            settings.TOP_UI_SIZE * settings.TILE_SIZE + 230,
+            200,
+            50,
+        )
+
+        self.screen_freeze = pygame.Surface(
+            (
+                settings.MAP_SIZE * settings.TILE_SIZE,
+                settings.MAP_SIZE * settings.TILE_SIZE,
+            ),
+            pygame.SRCALPHA,
+        )
+        self.screen_freeze.fill((255, 255, 255, 128))
 
         # Communication Protocol
         self.item_assignments = {}  # {item_pos: assigned_player_id}
@@ -80,6 +97,15 @@ class GameUI:
 
         if self.popup_active:
             self.draw_popup_menu(screen)
+
+        # Draw chip identifiers
+        self.draw_op_button(screen)
+
+        #
+        if self.game.op_time_enabled:
+            screen.blit(
+                self.screen_freeze, (0, settings.TOP_UI_SIZE * settings.TILE_SIZE)
+            )
 
     def draw_text_box(self, screen, title, text, y_offset):
         font = pygame.font.Font("./res/font/Redpixel-8Mqz2.ttf", 28)
@@ -155,11 +181,11 @@ class GameUI:
         for index, item in enumerate(inventory):
             row, col = divmod(index, 4)  # 4 items per row
             sprite = item.get_sprite()
-            if sprite:
-                screen.blit(
-                    sprite,
-                    (x + col * tile_size, y + row * tile_size),
-                )
+            if not sprite:
+                continue
+
+            item_pos = (x + col * tile_size, y + row * tile_size)
+            screen.blit(sprite, item_pos)
 
     def update_inventory(self, player, item, item_pos):
         if player.player_id == 1:
@@ -207,6 +233,12 @@ class GameUI:
             self.handle_popup_selection(event.pos)
             self.popup_active = False  # Hide popup after selection
 
+        elif event.button == 1 and self.op_button.collidepoint(event.pos):
+            if not self.game.op_time_enabled:
+                self.game.op_time_enabled = True
+            else:
+                self.game.op_time_enabled = False
+
     def get_clicked_collectable_item(self, x, y):
         """Checks if a collectable item was clicked."""
         item_spacing = settings.TILE_SIZE
@@ -229,30 +261,39 @@ class GameUI:
     def get_clicked_assigned_item(self, x, y):
         """Checks if an assigned item was clicked."""
         box_x = 20
-        box_y = 130  # Assignment box y-position
-        item_spacing = settings.TILE_SIZE
+        box_y = 150  # Assignment box y-position
+        box_width = (settings.TILE_SIZE * settings.MAP_SIZE - box_x - 20) // 2
+
+        # Create lists to track positions for each player
+        p1_positions = []
+        p2_positions = []
+
+        # First, calculate all the positions
         x_offset_p1 = box_x + 4
-        x_offset_p2 = (
-            box_x + (settings.TILE_SIZE * settings.MAP_SIZE - box_x - 20) // 2 + 24
-        )
+        x_offset_p2 = box_x + box_width + 24
 
-        for item_pos, player_id in self.item_assignments.items():
-            tile = self.tile_world.get_tile(item_pos[0], item_pos[1])
-            sprite = tile.get_sprite()
-            if sprite:
-                if player_id == 1:
-                    rect = pygame.Rect(
-                        x_offset_p1, box_y + 4, settings.TILE_SIZE, settings.TILE_SIZE
-                    )
-                    x_offset_p1 += item_spacing
-                else:
-                    rect = pygame.Rect(
-                        x_offset_p2, box_y + 4, settings.TILE_SIZE, settings.TILE_SIZE
-                    )
-                    x_offset_p2 += item_spacing
+        for item_pos, (player_id, _) in self.item_assignments.items():
+            if player_id == 1:
+                p1_positions.append((item_pos, x_offset_p1))
+                x_offset_p1 += settings.TILE_SIZE
+            else:
+                p2_positions.append((item_pos, x_offset_p2))
+                x_offset_p2 += settings.TILE_SIZE
 
-                if rect.collidepoint(x, y):
-                    return item_pos
+        # Now check if any position was clicked
+        for item_pos, offset_x in p1_positions:
+            rect = pygame.Rect(
+                offset_x, box_y + 4, settings.TILE_SIZE, settings.TILE_SIZE
+            )
+            if rect.collidepoint(x, y):
+                return item_pos
+
+        for item_pos, offset_x in p2_positions:
+            rect = pygame.Rect(
+                offset_x, box_y + 4, settings.TILE_SIZE, settings.TILE_SIZE
+            )
+            if rect.collidepoint(x, y):
+                return item_pos
 
         return None
 
@@ -405,6 +446,12 @@ class GameUI:
                     screen.blit(scaled_sprite, (x_offset_p2, y_offset))
                     x_offset_p2 += item_spacing  # Move right for next item
 
+    def draw_op_button(self, screen):
+        pygame.draw.rect(screen, (50, 50, 50), self.op_button)
+        font = pygame.font.Font("./res/font/Redpixel-8Mqz2.ttf", 40)
+        text_surface = font.render(self.op_time_text, True, (255, 255, 255))
+        screen.blit(text_surface, (self.op_button.x + 30, self.op_button.y + 7))
+
     def show_replay_button(self, screen):
         pygame.draw.rect(screen, (0, 0, 0), self.replay_button)
         font = pygame.font.Font("./res/font/Redpixel-8Mqz2.ttf", 50)
@@ -416,3 +463,6 @@ class GameUI:
         font = pygame.font.Font("./res/font/Redpixel-8Mqz2.ttf", 50)
         text_surface = font.render("Next Level", True, (255, 255, 255))
         screen.blit(text_surface, (self.nextlv_button.x + 25, self.nextlv_button.y + 5))
+
+    def show_resume_button(self, screen):
+        self.op_time_text = "RESUME"
