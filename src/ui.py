@@ -81,8 +81,11 @@ class GameUI:
 
         # Time
         elapsed_time = (pygame.time.get_ticks() - self.start_time) // 1000
-        remaining_time = max(0, self.tile_world.level_time - elapsed_time)
-        self.draw_text_box(screen, "TIME", str(remaining_time), start_y_offset)
+        # remaining_time = max(0, self.tile_world.level_time - elapsed_time)
+        minutes = elapsed_time // 60
+        seconds = elapsed_time % 60
+        formatted_time = f"{minutes:02}:{seconds:02}"
+        self.draw_text_box(screen, "TIME", str(formatted_time), start_y_offset)
 
         # Hint
         self.draw_text_box(screen, "HINT", self.hint_text, start_y_offset + 80)
