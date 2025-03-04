@@ -32,4 +32,8 @@ TILE_MAPPING = {
     67: ("BEETLE_EAST", False, (4, 3), "BEETLE_RIGHT", False),  # Beetle, moves east
     10: ("MOVABLE_DIRT_BLOCK", False, (0, 10), "PUSH", False),  # Movable dirt block
     11: ("DIRT", True, (0, 11), None, False),
+    200: ("CHIP_YELLOW", True, (7, 0), "COLLECT", True),  # Chip, collectable
+    201: ("CHIP_PINK", True, (7, 1), "COLLECT", True),  # Chip, collectable
+    202: ("CHIP_BLUE", True, (7, 2), "COLLECT", True),  # Chip, collectable
+    203: ("CHIP_GREEN", True, (7, 3), "COLLECT", True),  # Chip, collectable
 }

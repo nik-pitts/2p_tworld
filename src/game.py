@@ -53,7 +53,7 @@ class Game:
             self.tile_world,
             self,
             1,
-            record=False,
+            record=True,
         )
 
         # self.player2 = Player(
@@ -110,7 +110,7 @@ class Game:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
-                    save_human_data(self.player2)
+                    save_human_data(self.player1)
                     pygame.quit()
                     exit()
                 elif event.type == pygame.MOUSEBUTTONDOWN:

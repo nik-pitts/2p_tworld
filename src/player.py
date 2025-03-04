@@ -18,7 +18,6 @@ class Player:
         self.human_play_data = []
         self.record = record
         self.alive = True
-        self.sliding = False
         self.slide_dx, self.slide_dy = 0, 0
 
         # force floor handling variables
@@ -70,9 +69,31 @@ class Player:
         self.image = self.sprites["DOWN"]
 
     def process_move(self, dx, dy):
-        if not self.alive or self.exited or self.sliding:
-            return  # Ignore movement if dead, exited, or sliding
+        """Process movement and log all outcomes.
 
+        Args:
+            dx: Change in x position
+            dy: Change in y position
+        """
+        # Capture initial state before move
+        initial_state = self.get_state() if self.record else None
+        move_outcome = "attempted"
+        initial_position = (self.x, self.y)
+
+        # Early exit conditions
+        if not self.alive or self.exited:
+            move_outcome = "blocked_dead_or_exited"
+            if self.record:
+                self.log_move(self.direction, initial_state, move_outcome)
+            return
+
+        if self.is_sliding:
+            move_outcome = "blocked_sliding"
+            if self.record:
+                self.log_move(self.direction, initial_state, move_outcome)
+            return
+
+        # Calculate new position
         new_x, new_y = self.x + dx, self.y + dy
         tile = self.tile_world.get_tile(new_x, new_y)
 
@@ -80,52 +101,56 @@ class Player:
         self.tile_world.game_ui.clear_hint()
 
         # Socket tile handling
-        if tile.tile_type == "SOCKET" and not self.tile_world.socket_unlocked:
-            print(f"Player {self.player_id} cannot pass the socket yet!")
-            return
-        if tile.tile_type == "SOCKET" and self.tile_world.socket_unlocked:
-            print(f"Player {self.player_id} stepped on the socket! Removing it.")
-            self.tile_world.remove_socket(new_x, new_y)
-            self.x, self.y = new_x, new_y
+        if tile.tile_type == "SOCKET":
+            if not self.tile_world.socket_unlocked:
+                print(f"Player {self.player_id} cannot pass the socket yet!")
+                move_outcome = "blocked_socket_locked"
+                if self.record:
+                    self.log_move(self.direction, initial_state, move_outcome)
+                return
+            else:
+                print(f"Player {self.player_id} stepped on the socket! Removing it.")
+                self.tile_world.remove_socket(new_x, new_y)
+                self.x, self.y = new_x, new_y
+                move_outcome = "success_socket_removed"
+                if self.record:
+                    self.log_move(self.direction, initial_state, move_outcome)
+                return
 
-        # **PLAYER DEATH CONDITIONS**
+        # Death conditions - water and fire
         if tile.effect in ["BURN", "DROWN"]:
             # Check if player has corresponding boots
-            if (tile.effect == "BURN" and self.boots["FIRE"]) or (
+            has_protection = (tile.effect == "BURN" and self.boots["FIRE"]) or (
                 tile.effect == "DROWN" and self.boots["WATER"]
-            ):
-                # Player has appropriate boots, just move normally
+            )
+
+            if has_protection:
+                # Player has appropriate boots, move normally
                 print(
                     f"Player {self.player_id}'s boots protected them from {tile.effect.lower()}ing!"
                 )
                 self.x, self.y = new_x, new_y
-                self.log_move(self.direction)
-                self.image = self.sprites[self.direction]
+                move_outcome = f"success_protected_from_{tile.effect.lower()}"
             else:
                 # Player doesn't have boots, they die
                 print(f"Player {self.player_id} {tile.effect.lower()}ed!")
                 self.remove_self()
                 self.game.check_game_over()
+                move_outcome = f"death_{tile.effect.lower()}"
+
+            if self.record:
+                self.log_move(self.direction, initial_state, move_outcome)
             return
 
-        # **SLIDE MECHANIC**
+        # Ice sliding mechanic
         if tile.effect == "SLIDE":
+            move_outcome = "slide_initiated"
+            if self.record:
+                self.log_move(self.direction, initial_state, move_outcome)
             self.slide_on_ice(dx, dy)
-            # if self.boots["WATER"]:  # Water boots also work on ice
-            #     # Player has water boots, just move normally
-            #     print(
-            #         f"Player {self.player_id}'s water boots prevented them from sliding on ice!"
-            #     )
-            #     self.x, self.y = new_x, new_y
-            #     self.log_move(self.direction)
-            #     self.image = self.sprites[self.direction]
-            # else:
-            #     # Player doesn't have water boots, they slide
-            #     print(f"Player {self.player_id} slid on ice!")
-            #     self.slide_on_ice(dx, dy)
             return
 
-        # **FORCE MECHANIC**
+        # Force floor mechanic
         if tile.effect and tile.effect.startswith("FORCE_"):
             if self.boots["FORCE"]:
                 # Player has force boots, just move normally
@@ -133,20 +158,23 @@ class Player:
                     f"Player {self.player_id}'s force boots prevented them from being moved!"
                 )
                 self.x, self.y = new_x, new_y
-                self.log_move(self.direction)
-                self.image = self.sprites[self.direction]
+                move_outcome = "success_force_resisted"
             else:
                 # Player doesn't have force boots, they get moved
                 print(f"Player {self.player_id} stepped on a force floor!")
                 self.x, self.y = new_x, new_y
-                self.image = self.sprites[self.direction]
                 self.force_by_floor(tile.effect)
+                move_outcome = f"forced_{tile.effect}"
+
+            if self.record:
+                self.log_move(self.direction, initial_state, move_outcome)
             return
 
         # Hint tile handling
         if tile.effect == "HINT":
             print(f"Player {self.player_id} found a hint: {self.tile_world.hint}")
             self.tile_world.game_ui.show_hint(self.tile_world.hint)
+            move_outcome = "success_hint"
 
         # Chip collection handling
         if tile.effect == "COLLECT":
@@ -158,14 +186,16 @@ class Player:
                 Tile(
                     "FLOOR",
                     walkable=True,
+                    effect=None,
                     sprite_sheet=self.tile_world.sprite_sheet,
                     sprite_index=(0, 0),
                 ),
             )
 
             self.tile_world.remove_collectable(new_x, new_y)
-            collected_position = (new_x, new_y)  # Get the position
+            collected_position = (new_x, new_y)
             self.tile_world.game_ui.update_inventory(self, tile, collected_position)
+            move_outcome = "success_collect_chip"
 
         # Key collection
         if tile.tile_type == "KEY":
@@ -186,6 +216,7 @@ class Player:
             self.tile_world.remove_collectable(new_x, new_y)
             collected_position = (new_x, new_y)
             self.tile_world.game_ui.update_inventory(self, tile, collected_position)
+            move_outcome = f"success_collect_key_{key_color}"
 
         # Boot collection
         if tile.tile_type == "BOOT":
@@ -207,8 +238,9 @@ class Player:
             self.tile_world.remove_collectable(new_x, new_y)
             collected_position = (new_x, new_y)
             self.tile_world.game_ui.update_inventory(self, tile, collected_position)
+            move_outcome = f"success_collect_boot_{boot_type}"
 
-        # Door handling - add this before the "if tile.walkable:" check
+        # Door handling
         if tile.tile_type == "DOOR":
             door_color = tile.effect  # This should match the key color required
             if self.keys.get(door_color, False):
@@ -226,29 +258,59 @@ class Player:
                 )
                 # Now the player can move to this position
                 self.x, self.y = new_x, new_y
-                self.log_move(self.direction)
-                self.image = self.sprites[self.direction]
+                move_outcome = f"success_unlock_door_{door_color}"
+
+                if self.record:
+                    self.log_move(self.direction, initial_state, move_outcome)
                 return
             else:
                 print(
                     f"Player {self.player_id} needs a {door_color} key to unlock this door!"
                 )
+                move_outcome = f"blocked_door_needs_key_{door_color}"
+
+                if self.record:
+                    self.log_move(self.direction, initial_state, move_outcome)
                 return
 
+        # Block pushing
         if tile.effect == "PUSH":
-            self.push_block(new_x, new_y, dx, dy)
+            push_result = self.push_block(new_x, new_y, dx, dy)
+            if push_result:
+                move_outcome = "success_pushed_block"
+            else:
+                move_outcome = "blocked_could_not_push"
+
+            if self.record:
+                self.log_move(self.direction, initial_state, move_outcome)
+            return
 
         # Exit handling
-        if tile.effect == "EXIT" and self.tile_world.socket_unlocked:
-            print(f"Player {self.player_id} escaped!")
-            self.exited = True
+        if tile.effect == "EXIT":
+            if self.tile_world.socket_unlocked:
+                print(f"Player {self.player_id} escaped!")
+                self.exited = True
+                move_outcome = "success_exit"
+            else:
+                move_outcome = "blocked_exit_socket_locked"
+
+            if self.record:
+                self.log_move(self.direction, initial_state, move_outcome)
+            return
 
         # Wall collision detection
         if tile.walkable:
             self.x, self.y = new_x, new_y
-            self.log_move(self.direction)
+            move_outcome = "success_move"
+        else:
+            move_outcome = "blocked_unwalkable"
 
+        # Update player sprite based on direction
         self.image = self.sprites[self.direction]
+
+        # Log the final outcome if recording is enabled
+        if self.record:
+            self.log_move(self.direction, initial_state, move_outcome)
 
     def slide_on_ice(self, dx, dy):
         """Prepares the player to slide on ice continuously until hitting a non-slide tile."""
@@ -308,6 +370,10 @@ class Player:
 
             # Move player
             self.x, self.y = next_x, next_y
+
+            if self.record:
+                slide_state = self.get_state()
+                self.log_move("SLIDE", slide_state, "slide_movement")
 
             # Check if sliding is complete
             if not self.slide_movement_queue:
@@ -387,6 +453,10 @@ class Player:
             # Move player to next position
             self.x, self.y = next_x, next_y
 
+            if self.record:
+                slide_state = self.get_state()
+                self.log_move("FORCED", slide_state, "force_movement")
+
             # If queue is empty, end forced movement
             if not self.force_movement_queue:
                 self.is_being_forced = False
@@ -396,7 +466,7 @@ class Player:
         return False
 
     def push_block(self, block_x, block_y, dx, dy):
-        """Handles pushing a movable block."""
+        """Handles pushing a movable block. Returns True if push was successful."""
         target_x, target_y = block_x + dx, block_y + dy
         next_tile = self.tile_world.get_tile(target_x, target_y)
 
@@ -431,6 +501,8 @@ class Player:
                 Tile("FLOOR", True, None, self.tile_world.sprite_sheet, (0, 0)),
             )
             self.x, self.y = block_x, block_y  # Allow player to move forward
+            return True
+        return False
 
     def move(self, event):
         if self.exited or not self.alive:
@@ -457,14 +529,50 @@ class Player:
             dx = self.speed
             self.direction = "RIGHT"
 
-        if self.record:
-            self.log_move(self.direction)
-
         self.process_move(dx, dy)
 
-    def log_move(self, direction):
-        state = self.get_state()
-        self.human_play_data.append({"state": state, "action": direction})
+    def log_move(self, direction, state=None, outcome="success"):
+        """Log a move with its outcome and state information.
+
+        Args:
+            direction: Direction of the attempted move
+            state: Game state before the move (if None, will be captured)
+            outcome: Result of the move (success, death, slide, etc.)
+        """
+        if state is None:
+            state = self.get_state()
+
+        # Add additional metadata to improve learning
+        timestamp = pygame.time.get_ticks()
+
+        # Get other player position
+        other_player_pos = None
+        if self.player_id == 1 and hasattr(self.game, "player2"):
+            other_player_pos = [self.game.player2.x, self.game.player2.y]
+        elif self.player_id == 2 and hasattr(self.game, "player1"):
+            other_player_pos = [self.game.player1.x, self.game.player1.y]
+
+        # Only record keys and boots that are actually collected
+        collected_keys = {k: v for k, v in self.keys.items() if v}
+        collected_boots = {k: v for k, v in self.boots.items() if v}
+
+        self.human_play_data.append(
+            {
+                "state": state,
+                "action": direction,
+                "outcome": outcome,
+                "timestamp": timestamp,
+                "player_id": self.player_id,
+                "keys": collected_keys,
+                "boots": collected_boots,
+                "other_player_position": other_player_pos,
+                "is_sliding": self.is_sliding,
+                "is_being_forced": self.is_being_forced,
+                "game_time": (pygame.time.get_ticks() - self.game.ui.start_time),
+                "remaining_chips": self.tile_world.total_chips
+                - self.tile_world.collected_chips,
+            }
+        )
 
     def get_state(self):
         """Returns a structured state representation for AI training."""

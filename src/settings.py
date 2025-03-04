@@ -9,5 +9,5 @@ HEIGHT = TILE_SIZE * (MAP_SIZE + TOP_UI_SIZE)
 FPS = 60
 
 # File paths
-TILE_SHEET_PATH = "./res/tiles.bmp"
+TILE_SHEET_PATH = "./res/tiles_2p.bmp"
 LEVEL_DATA_PATH = "./res/lcm_level_data.json"
