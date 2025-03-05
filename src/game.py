@@ -77,6 +77,9 @@ class Game:
         # Initialize UI
         self.ui = GameUI(self.tile_world, self.player1, self.player2, self)
         self.tile_world.game_ui = self.ui  # Allow TileWorld to reference UI
+        self.recording = (
+            f"./data/human_play_data_level{self.tile_world.level_index}.json"
+        )
 
     def check_level_complete(self):
         """Checks if both players have reached the exit."""
@@ -89,7 +92,7 @@ class Game:
     def restart_game(self):
         """Restarts the game after game over."""
         print("Restarting game...")
-        save_human_data(self.player2)
+        save_human_data(self.player1, self.recording)
         self.running = True
         self.load_game()
 
@@ -110,7 +113,7 @@ class Game:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
-                    save_human_data(self.player1)
+                    save_human_data(self.player1, self.recording)
                     pygame.quit()
                     exit()
                 elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -179,8 +182,7 @@ class Game:
             self.ui.update_ui(self.screen)
             pygame.display.flip()
             self.clock.tick(settings.FPS)
-
-        save_human_data(self.player1)
+        save_human_data(self.player1, self.recording)
         pygame.quit()
         exit()
 

@@ -532,18 +532,38 @@ class Player:
         self.process_move(dx, dy)
 
     def log_move(self, direction, state=None, outcome="success"):
-        """Log a move with its outcome and state information.
-
-        Args:
-            direction: Direction of the attempted move
-            state: Game state before the move (if None, will be captured)
-            outcome: Result of the move (success, death, slide, etc.)
-        """
+        """Log a move with its outcome and state information."""
+        # Capture complete state if not provided
         if state is None:
             state = self.get_state()
 
-        # Add additional metadata to improve learning
-        timestamp = pygame.time.get_ticks()
+        # Meta information (not part of the state)
+        meta = {
+            "timestamp": pygame.time.get_ticks(),
+            "outcome": outcome,
+            "episode_time": pygame.time.get_ticks() - self.game.ui.start_time,
+        }
+
+        # The actual data for learning
+        self.human_play_data.append(
+            {
+                "state": state,  # All observable information
+                "action": direction,  # Action taken
+                "meta": meta,  # Metadata (not used for learning)
+            }
+        )
+
+    def get_state(self):
+        """Returns a comprehensive state representation for AI training."""
+        # Get the full game grid (2D representation)
+        full_grid = []
+        for y in range(self.tile_world.height):
+            row = []
+            for x in range(self.tile_world.width):
+                tile = self.tile_world.get_tile(x, y)
+                # You could encode tiles as integers for efficiency
+                row.append(tile.tile_type if tile else "WALL")
+            full_grid.append(row)
 
         # Get other player position
         other_player_pos = None
@@ -552,51 +572,31 @@ class Player:
         elif self.player_id == 2 and hasattr(self.game, "player1"):
             other_player_pos = [self.game.player1.x, self.game.player1.y]
 
-        # Only record keys and boots that are actually collected
+        # Only include collected keys/boots
         collected_keys = {k: v for k, v in self.keys.items() if v}
         collected_boots = {k: v for k, v in self.boots.items() if v}
 
-        self.human_play_data.append(
-            {
-                "state": state,
-                "action": direction,
-                "outcome": outcome,
-                "timestamp": timestamp,
-                "player_id": self.player_id,
-                "keys": collected_keys,
-                "boots": collected_boots,
-                "other_player_position": other_player_pos,
-                "is_sliding": self.is_sliding,
-                "is_being_forced": self.is_being_forced,
-                "game_time": (pygame.time.get_ticks() - self.game.ui.start_time),
-                "remaining_chips": self.tile_world.total_chips
-                - self.tile_world.collected_chips,
-            }
-        )
-
-    def get_state(self):
-        """Returns a structured state representation for AI training."""
-
-        # 3x3 Local Grid (Surrounding Tiles)
-        local_grid = []
-        for dy in range(-2, 3):
-            row = []
-            for dx in range(-2, 3):
-                tile = self.tile_world.get_tile(self.x + dx, self.y + dy)
-                row.append(tile.tile_type if tile else "WALL")
-            local_grid.append(row)
-
-        # Nearest Chip Calculation
-        nearest_chip = self.tile_world.find_nearest_chip(self.x, self.y, "CHIP")
-
+        # Return comprehensive state
         return {
+            # Player state
             "position": [self.x, self.y],
-            "chips_collected": self.collected_chips,
-            "total_collected_chips": self.tile_world.collected_chips,
-            "local_grid": local_grid,
-            "nearest_chip": nearest_chip,
+            "player_collected_chips": self.collected_chips,
+            "is_sliding": self.is_sliding,
+            "is_being_forced": self.is_being_forced,
+            "collected_keys": collected_keys,
+            "collected_boots": collected_boots,
+            "alive": self.alive,
+            # Game state
+            "full_grid": full_grid,  # Complete 2D grid
+            "nearest_chip": self.tile_world.find_nearest_chip(self.x, self.y, "CHIP"),
             "exit_position": self.tile_world.exit_position,
             "socket_unlocked": self.tile_world.socket_unlocked,
+            "total_collected_chips": self.tile_world.collected_chips,
+            "remaining_chips": self.tile_world.total_chips
+            - self.tile_world.collected_chips,
+            # Multiplayer state
+            "other_player_position": other_player_pos,
+            "player_id": self.player_id,
         }
 
     def remove_self(self):
