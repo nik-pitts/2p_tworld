@@ -6,13 +6,13 @@ class BehaviorCloningModel(nn.Module):
     def __init__(self, input_size, output_size):
         super(BehaviorCloningModel, self).__init__()
         self.fc = nn.Sequential(
-            nn.Linear(input_size, 64),
+            nn.Linear(input_size, 256),
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(256, 256),
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(256, 256),
             nn.ReLU(),
-            nn.Linear(64, output_size),
+            nn.Linear(256, output_size),
         )
 
     def forward(self, x):

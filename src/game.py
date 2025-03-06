@@ -47,32 +47,50 @@ class Game:
             )
 
         # Create players
-        self.player1 = Player(
-            player_positions[0][0],
-            player_positions[0][1],
-            self.tile_world,
-            self,
-            1,
-            record=True,
-        )
+        # self.player1 = Player(
+        #     player_positions[0][0],
+        #     player_positions[0][1],
+        #     self.tile_world,
+        #     self,
+        #     1,
+        #     record=True,
+        # )
 
-        # self.player2 = Player(
+        # self.player2 = BehaviorClonedAgent(
         #     player_positions[1][0],
         #     player_positions[1][1],
         #     self.tile_world,
         #     self,
         #     2,
-        #     record=False,
+        #     "./model/lv1_bc_model_2.1.pth",
         # )
 
-        self.player2 = BehaviorClonedAgent(
+        self.player1 = BehaviorClonedAgent(
+            player_positions[0][0],
+            player_positions[0][1],
+            self.tile_world,
+            self,
+            1,
+            "./model/lv1_bc_model_2.1.pth",
+        )
+
+        self.player2 = Player(
             player_positions[1][0],
             player_positions[1][1],
             self.tile_world,
             self,
             2,
-            "./model/lv1_bc_model_6.0.pth",
+            record=True,
         )
+
+        if isinstance(
+            self.player1, (RuleBasedAgent, TreeBasedAgent, BehaviorClonedAgent)
+        ):
+            self.agent = self.player1
+            self.human = self.player2
+        else:
+            self.agent = self.player2
+            self.human = self.player1
 
         # Initialize UI
         self.ui = GameUI(self.tile_world, self.player1, self.player2, self)
@@ -92,7 +110,7 @@ class Game:
     def restart_game(self):
         """Restarts the game after game over."""
         print("Restarting game...")
-        save_human_data(self.player1, self.recording)
+        save_human_data(self.human, self.recording)
         self.running = True
         self.load_game()
 
@@ -113,7 +131,7 @@ class Game:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
-                    save_human_data(self.player1, self.recording)
+                    save_human_data(self.human, self.recording)
                     pygame.quit()
                     exit()
                 elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -127,7 +145,7 @@ class Game:
                     and not self.op_time_enabled
                 ):
                     if event.type == pygame.KEYDOWN:
-                        self.player1.move(event)
+                        self.human.move(event)
 
             # Always draw the tile world
             self.tile_world.draw(self.screen)
@@ -158,11 +176,11 @@ class Game:
                     not player1_animated
                     and not player2_animated
                     and isinstance(
-                        self.player2,
+                        self.agent,
                         (RuleBasedAgent, TreeBasedAgent, BehaviorClonedAgent),
                     )
                 ):
-                    self.player2.step()
+                    self.agent.step()
 
                 # Move monsters only if game is running and no animations are playing
                 if not player1_animated and not player2_animated:
@@ -182,7 +200,7 @@ class Game:
             self.ui.update_ui(self.screen)
             pygame.display.flip()
             self.clock.tick(settings.FPS)
-        save_human_data(self.player1, self.recording)
+        save_human_data(self.human, self.recording)
         pygame.quit()
         exit()
 

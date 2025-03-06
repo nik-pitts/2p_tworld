@@ -4,6 +4,7 @@ import random
 import pygame
 from src.player import Player
 from src.models import BehaviorCloningModel
+from src.tile_definitions import TILE_MAPPING
 
 
 class RuleBasedAgent(Player):
@@ -234,76 +235,76 @@ class BehaviorClonedAgent(Player):
         self.model = self.load_model(model_path)
         self.model.eval()
 
+        # Create reverse mapping (tile_type -> ID) from TILE_MAPPING
+        self.tile_type_to_id = {}
+        for tile_id, (tile_type, _, _, _, _) in TILE_MAPPING.items():
+            self.tile_type_to_id[tile_type] = tile_id
+
         self.action_mapping = {0: "UP", 1: "DOWN", 2: "LEFT", 3: "RIGHT"}
         self.cooldown = 500  # 500ms
         self.last_step_time = pygame.time.get_ticks()
 
     def load_model(self, model_path):
         """Load a pre-trained Behavior Cloning model."""
-        model = BehaviorCloningModel(34, 4)
+        input_size = 184
+
+        model = BehaviorCloningModel(input_size, 4)
         model.load_state_dict(torch.load(model_path))
         return model
 
     def get_state_vector(self):
-        """Get the state vector for the current agent position."""
-        """The order of the state vector is as follows:
-        1. Agent position (x, y)
-        2. Chips collected
-        3. Total chips collected
-        4. Socket unlocked
-        5. Nearest chip position (x, y)
-        6. Exit position (x, y)
-        7. Local grid (5x5) around the agent"""
-        # 1. Agent position (x, y)
-        position = torch.tensor((self.x, self.y), dtype=torch.float32)
-        # 2. Chips collected
-        chips_collected = torch.tensor([self.collected_chips], dtype=torch.float32)
+        """Convert player state to tensor format for the ML model."""
+        # Get comprehensive state from parent class
+        state = super().get_state()
+
+        # Process the full grid
+        full_grid = []
+        for row in state["full_grid"]:
+            processed_row = []
+            for tile_type in row:
+                # Map to integer using the updated tile definitions
+                processed_row.append(self.tile_type_to_id.get(tile_type, 1))
+            full_grid.append(processed_row)
+        full_grid_tensor = torch.tensor(full_grid, dtype=torch.float32)
+
+        # Convert all components to tensors in the exact order expected by the model
+        position = torch.tensor(state["position"], dtype=torch.float32)
+        chips_collected = torch.tensor(
+            [state["player_collected_chips"]], dtype=torch.float32
+        )
         total_chips_collected = torch.tensor(
-            [self.tile_world.collected_chips], dtype=torch.float32
+            [state["total_collected_chips"]], dtype=torch.float32
         )
-        # 3. Socket unlocked
         socket_unlocked = torch.tensor(
-            [int(self.tile_world.socket_unlocked)], dtype=torch.float32
+            [int(state["socket_unlocked"])], dtype=torch.float32
         )
-        # 4. Nearest chip position (x, y)
-        nearest_chip = torch.tensor(
-            self.tile_world.find_nearest_chip(self.x, self.y, "CHIP"),
-            dtype=torch.float32,
+        nearest_chip = torch.tensor(state["nearest_chip"], dtype=torch.float32)
+        exit_position = torch.tensor(state["exit_position"], dtype=torch.float32)
+        is_sliding = torch.tensor([float(state["is_sliding"])], dtype=torch.float32)
+        is_being_forced = torch.tensor(
+            [float(state["is_being_forced"])], dtype=torch.float32
         )
-        # 5. Exit position (x, y)
-        exit_position = torch.tensor(self.tile_world.exit_position, dtype=torch.float32)
+        alive = torch.tensor([float(state["alive"])], dtype=torch.float32)
+        remaining_chips = torch.tensor([state["remaining_chips"]], dtype=torch.float32)
+        other_player_pos = torch.tensor(
+            state.get("other_player_position", [-1, -1]), dtype=torch.float32
+        )
 
-        # 6. Local grid (5x5) around the agent
-        tile_mapping = {
-            "WALL": 0,
-            "FLOOR": 1,
-            "CHIP": 2,
-            "EXIT": 3,
-            "SOCKET": 4,
-            "WATER": 5,
-            "FIRE": 6,
-            "HINT": 7,
-        }
-        local_grid = []
-        for dy in range(-2, 3):
-            row = []
-            for dx in range(-2, 3):
-                tile = self.tile_world.get_tile(self.x + dx, self.y + dy)
-                row.append(tile_mapping.get(tile.tile_type, 0))  # Default to 0 (WALL)
-            local_grid.append(row)
-
-        local_grid_tensor = torch.tensor(local_grid, dtype=torch.float32).flatten()
-
-        # Construct the state vector by concatenating all features
+        # Concatenate in the correct order
         state_vector = torch.cat(
             [
-                torch.tensor(position),
+                position,
                 chips_collected,
                 total_chips_collected,
                 socket_unlocked,
                 nearest_chip,
                 exit_position,
-                local_grid_tensor,
+                full_grid_tensor.flatten(),
+                is_sliding,
+                is_being_forced,
+                alive,
+                remaining_chips,
+                other_player_pos,
             ]
         )
 
@@ -316,10 +317,10 @@ class BehaviorClonedAgent(Player):
             state_vector = self.get_state_vector()
             output = self.model(state_vector)
             action_idx = torch.argmax(output).item()
-            return self.action_mapping[action_idx]
+        return self.action_mapping[action_idx]
 
     def step(self):
-        """Cool down"""
+        """Choose and execute an action after cooldown period"""
         current_time = pygame.time.get_ticks()
         if current_time - self.last_step_time < self.cooldown:
             return
@@ -334,6 +335,7 @@ class BehaviorClonedAgent(Player):
             "LEFT": (-1, 0),
             "RIGHT": (1, 0),
         }
+
         if action in movement:
             dx, dy = movement[action]
             self.direction = action
