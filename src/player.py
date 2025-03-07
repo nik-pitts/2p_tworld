@@ -78,7 +78,7 @@ class Player:
         # Capture initial state before move
         initial_state = self.get_state() if self.record else None
         move_outcome = "attempted"
-        initial_position = (self.x, self.y)
+        # initial_position = (self.x, self.y)
 
         # Early exit conditions
         if not self.alive or self.exited:
@@ -588,6 +588,7 @@ class Player:
             "alive": self.alive,
             # Game state
             "full_grid": full_grid,  # Complete 2D grid
+            "local_grid": self.tile_world.get_local_grid(self.x, self.y),
             "nearest_chip": self.tile_world.find_nearest_chip(self.x, self.y, "CHIP"),
             "exit_position": self.tile_world.exit_position,
             "socket_unlocked": self.tile_world.socket_unlocked,

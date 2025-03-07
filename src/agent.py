@@ -3,7 +3,7 @@ import torch
 import random
 import pygame
 from src.player import Player
-from src.models import BehaviorCloningModel
+from src.models import BehaviorCloningModel, BehaviorCloningModelLv2
 from src.tile_definitions import TILE_MAPPING
 
 
@@ -246,7 +246,7 @@ class BehaviorClonedAgent(Player):
 
     def load_model(self, model_path):
         """Load a pre-trained Behavior Cloning model."""
-        input_size = 184
+        input_size = 191
 
         model = BehaviorCloningModel(input_size, 4)
         model.load_state_dict(torch.load(model_path))
@@ -267,6 +267,16 @@ class BehaviorClonedAgent(Player):
             full_grid.append(processed_row)
         full_grid_tensor = torch.tensor(full_grid, dtype=torch.float32)
 
+        # Process the local grid
+        full_grid = []
+        for row in state["local_grid"]:
+            processed_row = []
+            for tile_type in row:
+                # Map to integer using the updated tile definitions
+                processed_row.append(self.tile_type_to_id.get(tile_type, 1))
+            full_grid.append(processed_row)
+        local_grid_tensor = torch.tensor(full_grid, dtype=torch.float32)
+
         # Convert all components to tensors in the exact order expected by the model
         position = torch.tensor(state["position"], dtype=torch.float32)
         chips_collected = torch.tensor(
@@ -279,18 +289,13 @@ class BehaviorClonedAgent(Player):
             [int(state["socket_unlocked"])], dtype=torch.float32
         )
         nearest_chip = torch.tensor(state["nearest_chip"], dtype=torch.float32)
-        exit_position = torch.tensor(state["exit_position"], dtype=torch.float32)
-        is_sliding = torch.tensor([float(state["is_sliding"])], dtype=torch.float32)
-        is_being_forced = torch.tensor(
-            [float(state["is_being_forced"])], dtype=torch.float32
-        )
+        exit_location = torch.tensor(state["exit_position"], dtype=torch.float32)
         alive = torch.tensor([float(state["alive"])], dtype=torch.float32)
         remaining_chips = torch.tensor([state["remaining_chips"]], dtype=torch.float32)
         other_player_pos = torch.tensor(
             state.get("other_player_position", [-1, -1]), dtype=torch.float32
         )
 
-        # Concatenate in the correct order
         state_vector = torch.cat(
             [
                 position,
@@ -298,10 +303,9 @@ class BehaviorClonedAgent(Player):
                 total_chips_collected,
                 socket_unlocked,
                 nearest_chip,
-                exit_position,
+                exit_location,
                 full_grid_tensor.flatten(),
-                is_sliding,
-                is_being_forced,
+                local_grid_tensor.flatten(),
                 alive,
                 remaining_chips,
                 other_player_pos,
@@ -340,3 +344,217 @@ class BehaviorClonedAgent(Player):
             dx, dy = movement[action]
             self.direction = action
             self.process_move(dx, dy)
+        else:
+            pass
+
+
+class BehaviorClonedAgentLv2(Player):
+    def __init__(
+        self, x, y, tile_world, game, player_id, model_path, normalize_features=True
+    ):
+        super().__init__(x, y, tile_world, game, player_id)
+
+        # Import the pre-trained Behavior Cloning model
+        self.model = self.load_model(model_path)
+        self.model.eval()
+
+        # Create reverse mapping (tile_type -> ID) from TILE_MAPPING
+        self.tile_type_to_id = {}
+        for tile_id, (tile_type, _, _, _, _) in TILE_MAPPING.items():
+            self.tile_type_to_id[tile_type] = tile_id
+
+        self.action_mapping = {
+            0: "UP",
+            1: "DOWN",
+            2: "LEFT",
+            3: "RIGHT",
+            4: "FORCED",
+            5: "SLIDE",
+        }
+        self.cooldown = 500  # 500ms
+        self.last_step_time = pygame.time.get_ticks()
+
+        # Feature normalization option
+        self.normalize_features = normalize_features
+
+        # Calculate dataset statistics if normalizing
+        if self.normalize_features:
+            self.calculate_normalization_stats()
+
+    def load_model(self, model_path):
+        """Load a pre-trained Behavior Cloning model."""
+        input_size = 200
+
+        model = BehaviorCloningModelLv2(input_size, 6)
+        model.load_state_dict(torch.load(model_path))
+        return model
+
+    def calculate_normalization_stats(self):
+        """Calculate statistics for feature normalization"""
+        # Extract grid dimensions from first sample
+        self.grid_height = 13
+        self.grid_width = 13
+
+        # Initialize normalization ranges
+        self.position_max = 13
+        self.chip_max = 2
+
+    def __len__(self):
+        return len(self.data)
+
+    def get_state_vector(self):
+        # Get comprehensive state from parent class
+        state = super().get_state()
+
+        # Extract state components
+        position = torch.tensor(state["position"], dtype=torch.float32)
+        chips_collected = torch.tensor(
+            [state["player_collected_chips"]], dtype=torch.float32
+        )
+        total_chips_collected = torch.tensor(
+            [state["total_collected_chips"]], dtype=torch.float32
+        )
+        socket_unlocked = torch.tensor(
+            [int(state["socket_unlocked"])], dtype=torch.float32
+        )
+        nearest_chip = torch.tensor(state["nearest_chip"], dtype=torch.float32)
+        exit_location = torch.tensor(state["exit_position"], dtype=torch.float32)
+
+        # Process key and boot information
+        # Convert dictionary form to binary features
+        key_features = torch.zeros(4)  # RED, BLUE, GREEN, YELLOW
+        boot_features = torch.zeros(3)  # WATER, FIRE, FORCE
+
+        # Process keys if available
+        if "collected_keys" in state and state["collected_keys"]:
+            keys_dict = state["collected_keys"]
+            if "RED" in keys_dict and keys_dict["RED"]:
+                key_features[0] = 1.0
+            if "BLUE" in keys_dict and keys_dict["BLUE"]:
+                key_features[1] = 1.0
+            if "GREEN" in keys_dict and keys_dict["GREEN"]:
+                key_features[2] = 1.0
+            if "YELLOW" in keys_dict and keys_dict["YELLOW"]:
+                key_features[3] = 1.0
+
+        # Process boots if available
+        if "collected_boots" in state and state["collected_boots"]:
+            boots_dict = state["collected_boots"]
+            if "WATER" in boots_dict and boots_dict["WATER"]:
+                boot_features[0] = 1.0
+            if "FIRE" in boots_dict and boots_dict["FIRE"]:
+                boot_features[1] = 1.0
+            if "FORCE" in boots_dict and boots_dict["FORCE"]:
+                boot_features[2] = 1.0
+
+        # Process the full grid
+        full_grid = []
+        for row in state["full_grid"]:
+            processed_row = []
+            for tile_type in row:
+                # Map to integer using the updated tile definitions
+                tile_id = self.tile_type_to_id.get(tile_type, 1)
+                processed_row.append(tile_id)
+            full_grid.append(processed_row)
+
+        full_grid_tensor = torch.tensor(full_grid, dtype=torch.float32)
+
+        # Process the local grid
+        local_grid = []
+        for row in state["local_grid"]:
+            processed_row = []
+            for tile_type in row:
+                # Map to integer using the updated tile definitions
+                tile_id = self.tile_type_to_id.get(tile_type, 1)
+                processed_row.append(tile_id)
+            local_grid.append(processed_row)
+
+        local_grid_tensor = torch.tensor(local_grid, dtype=torch.float32)
+
+        if self.normalize_features:
+            max_tile_id = max(self.tile_type_to_id.values())
+            full_grid_tensor = full_grid_tensor / max_tile_id
+            local_grid_tensor = local_grid_tensor / max_tile_id
+
+        # Additional state information
+        is_sliding = torch.tensor(
+            [float(state.get("is_sliding", False))], dtype=torch.float32
+        )
+        is_being_forced = torch.tensor(
+            [float(state.get("is_being_forced", False))], dtype=torch.float32
+        )
+        alive = torch.tensor([float(state.get("alive", True))], dtype=torch.float32)
+        remaining_chips = torch.tensor(
+            [state.get("remaining_chips", 0)], dtype=torch.float32
+        )
+        other_player_pos = torch.tensor(
+            state.get("other_player_position", [-1, -1]), dtype=torch.float32
+        )
+
+        # Normalize position-based features if enabled
+        if self.normalize_features:
+            position = position / self.position_max
+            nearest_chip = nearest_chip / self.position_max
+            exit_location = exit_location / self.position_max
+
+            if not (other_player_pos[0] == -1 and other_player_pos[1] == -1):
+                other_player_pos = other_player_pos / self.position_max
+
+            chips_collected = chips_collected / self.chip_max
+            total_chips_collected = total_chips_collected / self.chip_max
+            remaining_chips = remaining_chips / self.chip_max
+
+        # Concatenate all state information into a single vector
+        state_vector = torch.cat(
+            [
+                position,  # 2
+                chips_collected,  # 1
+                total_chips_collected,  # 1
+                socket_unlocked,  # 1
+                nearest_chip,  # 2
+                exit_location,  # 2
+                key_features,  # 4 (RED, BLUE, GREEN, YELLOW)
+                boot_features,  # 3 (WATER, FIRE, FORCE)
+                full_grid_tensor.flatten(),  # grid_height * grid_width
+                local_grid_tensor.flatten(),
+                is_sliding,  # 1
+                is_being_forced,  # 1
+                alive,  # 1
+                remaining_chips,  # 1
+                other_player_pos,  # 2
+            ]
+        )
+
+        return state_vector.unsqueeze(0)
+
+    def predict_action(self):
+        """Prediction using BC model"""
+        with torch.no_grad():
+            state_vector = self.get_state_vector()
+            output = self.model(state_vector)
+            action_idx = torch.argmax(output).item()
+        return self.action_mapping[action_idx]
+
+    def step(self):
+        """Choose and execute an action after cooldown period"""
+        current_time = pygame.time.get_ticks()
+        if current_time - self.last_step_time < self.cooldown:
+            return
+
+        self.last_step_time = current_time
+
+        # Predict the next action
+        action = self.predict_action()
+        valid_movement = {
+            "UP": (0, -1),
+            "DOWN": (0, 1),
+            "LEFT": (-1, 0),
+            "RIGHT": (1, 0),
+        }
+
+        if action in valid_movement:
+            dx, dy = valid_movement[action]
+            self.direction = action
+            self.process_move(dx, dy)
+        else:
+            pass

@@ -208,7 +208,7 @@ class GameUI:
     def handle_click(self, event):
         if self.game.pause:
             if self.replay_button.collidepoint(event.pos):
-                self.game.load_game(next_level=False)
+                self.game.restart_game()
 
             if self.nextlv_button.collidepoint(event.pos):
                 self.game.load_game(next_level=True)

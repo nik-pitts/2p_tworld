@@ -248,3 +248,14 @@ class TileWorld:
         if (x, y) in self.collectable_list:
             self.collectable_list.remove((x, y))
             print(f"Item at ({x}, {y}) removed from collectable list")
+
+    def get_local_grid(self, x, y):
+        """Helper to get local grid view around player."""
+        local_grid = []
+        for dy in range(-1, 2):
+            row = []
+            for dx in range(-1, 2):
+                tile = self.get_tile(x + dx, y + dy)
+                row.append(tile.tile_type if tile else "WALL")
+            local_grid.append(row)
+        return local_grid

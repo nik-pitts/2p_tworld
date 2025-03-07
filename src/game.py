@@ -3,7 +3,12 @@ import src.settings as settings
 from src.player import Player
 from src.tiles import TileSpriteSheet, TileWorld
 from src.ui import GameUI
-from src.agent import RuleBasedAgent, TreeBasedAgent, BehaviorClonedAgent
+from src.agent import (
+    RuleBasedAgent,
+    TreeBasedAgent,
+    BehaviorClonedAgent,
+    BehaviorClonedAgentLv2,
+)
 from src.data_utils import save_human_data
 
 
@@ -26,7 +31,7 @@ class Game:
         self.tile_world = TileWorld(settings.LEVEL_DATA_PATH, self.tile_sprite_sheet)
 
         # Load game
-        self.load_game(next_level=False)
+        self.load_game(next_level=True)
 
     def load_game(self, next_level=False):
         """Loads a new level or restarts the game."""
@@ -47,41 +52,41 @@ class Game:
             )
 
         # Create players
-        # self.player1 = Player(
-        #     player_positions[0][0],
-        #     player_positions[0][1],
-        #     self.tile_world,
-        #     self,
-        #     1,
-        #     record=True,
-        # )
-
-        # self.player2 = BehaviorClonedAgent(
-        #     player_positions[1][0],
-        #     player_positions[1][1],
-        #     self.tile_world,
-        #     self,
-        #     2,
-        #     "./model/lv1_bc_model_2.1.pth",
-        # )
-
-        self.player1 = BehaviorClonedAgent(
+        self.player1 = Player(
             player_positions[0][0],
             player_positions[0][1],
             self.tile_world,
             self,
             1,
-            "./model/lv1_bc_model_2.1.pth",
+            record=False,
         )
 
-        self.player2 = Player(
+        self.player2 = BehaviorClonedAgentLv2(
             player_positions[1][0],
             player_positions[1][1],
             self.tile_world,
             self,
             2,
-            record=True,
+            "./model/lv2_bc_model_1.0.pth",
         )
+
+        # self.player1 = BehaviorClonedAgent(
+        #     player_positions[0][0],
+        #     player_positions[0][1],
+        #     self.tile_world,
+        #     self,
+        #     1,
+        #     "./model/lv1_bc_model_3.1.pth",
+        # )
+
+        # self.player2 = Player(
+        #     player_positions[1][0],
+        #     player_positions[1][1],
+        #     self.tile_world,
+        #     self,
+        #     2,
+        #     record=True,
+        # )
 
         if isinstance(
             self.player1, (RuleBasedAgent, TreeBasedAgent, BehaviorClonedAgent)
@@ -112,7 +117,7 @@ class Game:
         print("Restarting game...")
         save_human_data(self.human, self.recording)
         self.running = True
-        self.load_game()
+        self.load_game(next_level=False)
 
     def check_game_over(self):
         """Ends the game when both players are dead."""
@@ -141,7 +146,7 @@ class Game:
                 # Block player input when paused or being forced
                 if (
                     not self.pause
-                    and not self.player1.is_being_forced
+                    and not self.human.is_being_forced
                     and not self.op_time_enabled
                 ):
                     if event.type == pygame.KEYDOWN:
@@ -171,16 +176,26 @@ class Game:
                     self.player1.remove_self()
                     self.check_game_over()
 
+                if self.player2.collision_detection(self.player2.x, self.player2.y):
+                    self.player2.remove_self()
+                    self.check_game_over()
+
                 # Player 2's turn (only if it's an agent and no animations are playing)
                 if (
                     not player1_animated
                     and not player2_animated
                     and isinstance(
                         self.agent,
-                        (RuleBasedAgent, TreeBasedAgent, BehaviorClonedAgent),
+                        (
+                            RuleBasedAgent,
+                            TreeBasedAgent,
+                            BehaviorClonedAgent,
+                            BehaviorClonedAgentLv2,
+                        ),
                     )
                 ):
                     self.agent.step()
+                    # pass
 
                 # Move monsters only if game is running and no animations are playing
                 if not player1_animated and not player2_animated:
