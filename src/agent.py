@@ -228,7 +228,7 @@ class TreeBasedAgent(Player):
 
 
 class BehaviorClonedAgent(Player):
-    def __init__(self, x, y, tile_world, game, player_id, model_path):
+    def __init__(self, x, y, tile_world, game, player_id, model_path, is_train=False):
         super().__init__(x, y, tile_world, game, player_id)
 
         # Import the pre-trained Behavior Cloning model
@@ -241,15 +241,17 @@ class BehaviorClonedAgent(Player):
             self.tile_type_to_id[tile_type] = tile_id
 
         self.action_mapping = {0: "UP", 1: "DOWN", 2: "LEFT", 3: "RIGHT"}
-        self.cooldown = 500  # 500ms
+        self.cooldown = 300  # 500ms
         self.last_step_time = pygame.time.get_ticks()
+        self.is_train = is_train
+        self.set_child_attribute(self.is_train)  # Pass child's attribute to parent
 
     def load_model(self, model_path):
         """Load a pre-trained Behavior Cloning model."""
         input_size = 191
 
         model = BehaviorCloningModel(input_size, 4)
-        model.load_state_dict(torch.load(model_path))
+        model.load_state_dict(torch.load(model_path, weights_only=True))
         return model
 
     def get_state_vector(self):
@@ -257,7 +259,7 @@ class BehaviorClonedAgent(Player):
         # Get comprehensive state from parent class
         state = super().get_state()
 
-        # Process the full grid
+        # Process the fusll grid
         full_grid = []
         for row in state["full_grid"]:
             processed_row = []
@@ -323,16 +325,19 @@ class BehaviorClonedAgent(Player):
             action_idx = torch.argmax(output).item()
         return self.action_mapping[action_idx]
 
-    def step(self):
-        """Choose and execute an action after cooldown period"""
-        current_time = pygame.time.get_ticks()
-        if current_time - self.last_step_time < self.cooldown:
-            return
+    def step(self, action=None):
+        if not self.is_train:
+            """Choose and execute an action after cooldown period"""
+            current_time = pygame.time.get_ticks()
+            if current_time - self.last_step_time < self.cooldown:
+                return
 
-        self.last_step_time = current_time
+            self.last_step_time = current_time
 
         # Predict the next action
-        action = self.predict_action()
+        if action is None:
+            action = self.predict_action()
+
         movement = {
             "UP": (0, -1),
             "DOWN": (0, 1),
@@ -386,7 +391,7 @@ class BehaviorClonedAgentLv2(Player):
         input_size = 200
 
         model = BehaviorCloningModelLv2(input_size, 6)
-        model.load_state_dict(torch.load(model_path))
+        model.load_state_dict(torch.load(model_path, weights_only=True))
         return model
 
     def calculate_normalization_stats(self):

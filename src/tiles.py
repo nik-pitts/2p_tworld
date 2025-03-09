@@ -168,6 +168,7 @@ class TileWorld:
     def collect_chip(self):
         """Function to collect a chip"""
         self.collected_chips += 1
+
         print(f"🔹 Chips collected: {self.collected_chips}/{self.total_chips}")
         if self.collected_chips >= self.total_chips:
             self.unlock_socket()

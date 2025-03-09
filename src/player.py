@@ -19,6 +19,7 @@ class Player:
         self.record = record
         self.alive = True
         self.slide_dx, self.slide_dy = 0, 0
+        self.is_train = False
 
         # force floor handling variables
         self.is_being_forced = False
@@ -97,8 +98,9 @@ class Player:
         new_x, new_y = self.x + dx, self.y + dy
         tile = self.tile_world.get_tile(new_x, new_y)
 
-        # Remove hint when moving
-        self.tile_world.game_ui.clear_hint()
+        if not self.is_train:
+            # Remove hint when moving
+            self.tile_world.game_ui.clear_hint()
 
         # Socket tile handling
         if tile.tile_type == "SOCKET":
@@ -631,3 +633,6 @@ class Player:
             if beetle.x == x and beetle.y == y:
                 return True
         return False
+
+    def set_child_attribute(self, value):
+        self.is_train = value

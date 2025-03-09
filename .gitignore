@@ -3,3 +3,4 @@ model/archive/
 colab/wandb/
 .idea/
 __pycache__/
+wandb/

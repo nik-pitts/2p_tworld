@@ -31,7 +31,7 @@ class Game:
         self.tile_world = TileWorld(settings.LEVEL_DATA_PATH, self.tile_sprite_sheet)
 
         # Load game
-        self.load_game(next_level=True)
+        self.load_game(next_level=False)
 
     def load_game(self, next_level=False):
         """Loads a new level or restarts the game."""
@@ -52,22 +52,22 @@ class Game:
             )
 
         # Create players
-        self.player1 = Player(
+        self.player1 = BehaviorClonedAgent(
             player_positions[0][0],
             player_positions[0][1],
             self.tile_world,
             self,
             1,
-            record=False,
+            "./model/lv1_bc_model_3.8.pth",
         )
 
-        self.player2 = BehaviorClonedAgentLv2(
+        self.player2 = Player(
             player_positions[1][0],
             player_positions[1][1],
             self.tile_world,
             self,
             2,
-            "./model/lv2_bc_model_1.0.pth",
+            record=True,
         )
 
         # self.player1 = BehaviorClonedAgent(
