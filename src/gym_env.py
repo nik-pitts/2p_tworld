@@ -50,14 +50,13 @@ class GymEnv(gym.Env):
         """
         observation, reward, done, info = self.game.step(action)
 
-        print(f"Action: {action}, Reward: {reward}, Done: {done}")
-        print(f"Agent position: ({self.game.player1.x}, {self.game.player1.y})")
-        print(
-            f"Chips collected: {self.game.player1.collected_chips}/{self.game.tile_world.total_chips}"
-        )
-
-        if done:
-            print("Episode terminated exceeded max steps")
+        # if done:
+        #     print("######### INSPECT OUTPUT #########")
+        #     print(
+        #         f"Player 1 collected chips: {info['p1_chips_collected']}, Player 2 colledcted chips: {info['p2_chips_collected']}"
+        #     )
+        #     print(f"Game Over? {info['level_complete']}")
+        #     print(f"Level Complete? {info['level_complete']}")
 
         return observation, reward, done, False, info
 

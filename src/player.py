@@ -105,13 +105,13 @@ class Player:
         # Socket tile handling
         if tile.tile_type == "SOCKET":
             if not self.tile_world.socket_unlocked:
-                print(f"Player {self.player_id} cannot pass the socket yet!")
+                # print(f"Player {self.player_id} cannot pass the socket yet!")
                 move_outcome = "blocked_socket_locked"
                 if self.record:
                     self.log_move(self.direction, initial_state, move_outcome)
                 return
             else:
-                print(f"Player {self.player_id} stepped on the socket! Removing it.")
+                # print(f"Player {self.player_id} stepped on the socket! Removing it.")
                 self.tile_world.remove_socket(new_x, new_y)
                 self.x, self.y = new_x, new_y
                 move_outcome = "success_socket_removed"
@@ -128,14 +128,14 @@ class Player:
 
             if has_protection:
                 # Player has appropriate boots, move normally
-                print(
-                    f"Player {self.player_id}'s boots protected them from {tile.effect.lower()}ing!"
-                )
+                # print(
+                #     f"Player {self.player_id}'s boots protected them from {tile.effect.lower()}ing!"
+                # )
                 self.x, self.y = new_x, new_y
                 move_outcome = f"success_protected_from_{tile.effect.lower()}"
             else:
                 # Player doesn't have boots, they die
-                print(f"Player {self.player_id} {tile.effect.lower()}ed!")
+                # print(f"Player {self.player_id} {tile.effect.lower()}ed!")
                 self.remove_self()
                 self.game.check_game_over()
                 move_outcome = f"death_{tile.effect.lower()}"
@@ -174,7 +174,7 @@ class Player:
 
         # Hint tile handling
         if tile.effect == "HINT":
-            print(f"Player {self.player_id} found a hint: {self.tile_world.hint}")
+            # print(f"Player {self.player_id} found a hint: {self.tile_world.hint}")
             self.tile_world.game_ui.show_hint(self.tile_world.hint)
             move_outcome = "success_hint"
 
@@ -224,7 +224,7 @@ class Player:
         if tile.tile_type == "BOOT":
             boot_type = tile.effect  # This will be "WATER", "FIRE", or "FORCE"
             self.boots[boot_type] = True
-            print(f"👢 Player {self.player_id} collected {boot_type} boots!")
+            # print(f"👢 Player {self.player_id} collected {boot_type} boots!")
             self.tile_world.set_tile(
                 new_x,
                 new_y,
@@ -246,7 +246,7 @@ class Player:
         if tile.tile_type == "DOOR":
             door_color = tile.effect  # This should match the key color required
             if self.keys.get(door_color, False):
-                print(f"Player {self.player_id} unlocked a {door_color} door!")
+                # print(f"Player {self.player_id} unlocked a {door_color} door!")
                 self.tile_world.set_tile(
                     new_x,
                     new_y,
@@ -290,7 +290,7 @@ class Player:
         # Exit handling
         if tile.effect == "EXIT":
             if self.tile_world.socket_unlocked:
-                print(f"Player {self.player_id} escaped!")
+                # print(f"Player {self.player_id} escaped!")
                 self.exited = True
                 move_outcome = "success_exit"
             else:
@@ -364,7 +364,7 @@ class Player:
 
             # Handle death effects
             if effect in ["BURN", "DROWN"]:
-                print(f"Player {self.player_id} {effect.lower()}ed while sliding!")
+                # print(f"Player {self.player_id} {effect.lower()}ed while sliding!")
                 self.remove_self()
                 self.game.check_game_over()
                 self.is_sliding = False
@@ -446,7 +446,7 @@ class Player:
 
             # Handle death effects
             if effect in ["BURN", "DROWN"]:
-                print(f"Player {self.player_id} {effect.lower()}ed while being forced!")
+                # print(f"Player {self.player_id} {effect.lower()}ed while being forced!")
                 self.remove_self()
                 self.game.check_game_over()
                 self.is_being_forced = False

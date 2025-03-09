@@ -180,7 +180,7 @@ def parse_args():
 
     # Training settings
     parser.add_argument(
-        "--timesteps", type=int, default=1, help="Total timesteps to train"
+        "--timesteps", type=int, default=200000, help="Total timesteps to train"
     )
     parser.add_argument(
         "--learning-rate", type=float, default=0.0001, help="Learning rate"

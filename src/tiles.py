@@ -85,7 +85,7 @@ class TileWorld:
         self.reset_level_state()
         """Load a specific level by index."""
         if level_index >= len(self.level_data):
-            print("All levels completed! Restarting from Level 1.")
+            # print("All levels completed! Restarting from Level 1.")
             level_index = 0  # Restart from the first level
 
         # Fetch level data
@@ -104,9 +104,9 @@ class TileWorld:
         self.player_positions = []  # Reset player positions
         self.initialize_tiles(level_data["upperLayer"])  # Populate tiles
 
-        print(
-            f"Loaded Level {level_index + 1}: {level_data['map_title']} (Chips Required: {self.total_chips}, Time: {self.level_time}s)"
-        )
+        # print(
+        #     f"Loaded Level {level_index + 1}: {level_data['map_title']} (Chips Required: {self.total_chips}, Time: {self.level_time}s)"
+        # )
 
     def initialize_tiles(self, upper_layer):
         """Process and set up tiles based on level data."""
@@ -169,7 +169,7 @@ class TileWorld:
         """Function to collect a chip"""
         self.collected_chips += 1
 
-        print(f"🔹 Chips collected: {self.collected_chips}/{self.total_chips}")
+        # print(f"🔹 Chips collected: {self.collected_chips}/{self.total_chips}")
         if self.collected_chips >= self.total_chips:
             self.unlock_socket()
 
@@ -177,14 +177,14 @@ class TileWorld:
         """Track when a player collects a key"""
         # Set the corresponding key in the player's inventory
         player.keys[key_color] = True
-        print(f"🔑 Player {player.player_id} collected a {key_color} key!")
+        # print(f"🔑 Player {player.player_id} collected a {key_color} key!")
 
     def unlock_socket(self):
         self.socket_unlocked = True
-        print("The socket has been unlocked!")
+        # print("The socket has been unlocked!")
 
     def remove_socket(self, x, y):
-        print("A player has stepped on the socket! It is now removed.")
+        # print("A player has stepped on the socket! It is now removed.")
         self.set_tile(x, y, Tile("FLOOR", True, None, self.sprite_sheet, (0, 0)))
 
     def set_tile(self, x, y, tile):
@@ -248,7 +248,7 @@ class TileWorld:
         """Remove a collected item from the collectable_list"""
         if (x, y) in self.collectable_list:
             self.collectable_list.remove((x, y))
-            print(f"Item at ({x}, {y}) removed from collectable list")
+            # print(f"Item at ({x}, {y}) removed from collectable list")
 
     def get_local_grid(self, x, y):
         """Helper to get local grid view around player."""

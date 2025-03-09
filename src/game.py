@@ -58,7 +58,7 @@ class Game:
             self.tile_world,
             self,
             1,
-            "./model/lv1_bc_model_3.8.pth",
+            "./model/compatible_ppo_20250308_215426_bc_compatible.pth",
         )
 
         self.player2 = Player(
