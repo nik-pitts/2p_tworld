@@ -1,4 +1,5 @@
 import pygame
+import random
 import src.settings as settings
 from src.player import Player
 from src.tiles import TileSpriteSheet, TileWorld
@@ -8,6 +9,7 @@ from src.agent import (
     TreeBasedAgent,
     BehaviorClonedAgent,
     BehaviorClonedAgentLv2,
+    RLAgent,
 )
 from src.data_utils import save_human_data
 
@@ -22,7 +24,7 @@ class Game:
         self.op_time_enabled = False
 
         # Load background once instead of every frame
-        self.background_image = pygame.image.load("./res/backgroundimg.png")
+        self.background_image = pygame.image.load("./res/backgroundimg_extended.png")
 
         # Load tile sprite sheet
         self.tile_sprite_sheet = TileSpriteSheet(
@@ -31,7 +33,7 @@ class Game:
         self.tile_world = TileWorld(settings.LEVEL_DATA_PATH, self.tile_sprite_sheet)
 
         # Load game
-        self.load_game(next_level=False)
+        self.load_game(next_level=True)
 
     def load_game(self, next_level=False):
         """Loads a new level or restarts the game."""
@@ -41,8 +43,20 @@ class Game:
             self.tile_world.level_index = self.tile_world.level_index
 
         self.pause = False
+        self.level_completed_time = 0
+        self.touchdown_time_started = 0
+        self.optime_has_triggered = False
         self.op_time_enabled = False
+        self.touchdown_time_enabled = False
+        self.op_time_start = 0
+        self.op_time_duration = 0
         self.tile_world.load_level(self.tile_world.level_index)
+        self.agent_thinking_settings = {
+            "is_thinking": False,
+            "init_time": 0,
+            "delay_time": 3000,
+        }
+        self.level_complete = False
 
         # Load player positions
         player_positions = self.tile_world.player_positions
@@ -52,31 +66,33 @@ class Game:
             )
 
         # Create players
-        self.player1 = BehaviorClonedAgent(
+        self.player1 = Player(
             player_positions[0][0],
             player_positions[0][1],
             self.tile_world,
             self,
             1,
-            "./model/compatible_ppo_20250308_215426_bc_compatible.pth",
+            record=True,
         )
 
-        self.player2 = Player(
+        self.player2 = BehaviorClonedAgentLv2(
             player_positions[1][0],
             player_positions[1][1],
             self.tile_world,
             self,
             2,
-            record=True,
+            "./model/lv2_bc_model_9.4.pth",
+            is_train=False,
+            alignment=0,
         )
 
-        # self.player1 = BehaviorClonedAgent(
+        # self.player1 = Player(
         #     player_positions[0][0],
         #     player_positions[0][1],
         #     self.tile_world,
         #     self,
         #     1,
-        #     "./model/lv1_bc_model_3.1.pth",
+        #     record=True,
         # )
 
         # self.player2 = Player(
@@ -85,17 +101,38 @@ class Game:
         #     self.tile_world,
         #     self,
         #     2,
-        #     record=True,
+        #     record=False,
         # )
 
+        self.agent, self.human = [], None
+
         if isinstance(
-            self.player1, (RuleBasedAgent, TreeBasedAgent, BehaviorClonedAgent)
+            self.player1,
+            (
+                RuleBasedAgent,
+                TreeBasedAgent,
+                BehaviorClonedAgent,
+                BehaviorClonedAgentLv2,
+                RLAgent,
+            ),
         ):
-            self.agent = self.player1
-            self.human = self.player2
+            self.agent.append(self.player1)
         else:
-            self.agent = self.player2
             self.human = self.player1
+
+        if isinstance(
+            self.player2,
+            (
+                RuleBasedAgent,
+                TreeBasedAgent,
+                BehaviorClonedAgent,
+                BehaviorClonedAgentLv2,
+                RLAgent,
+            ),
+        ):
+            self.agent.append(self.player2)
+        else:
+            self.human = self.player2
 
         # Initialize UI
         self.ui = GameUI(self.tile_world, self.player1, self.player2, self)
@@ -105,38 +142,45 @@ class Game:
         )
 
     def check_level_complete(self):
-        """Checks if both players have reached the exit."""
-        if self.player1.exited or self.player2.exited:
+        """if both players have reached the exit."""
+        if (
+            self.player1.exited or self.player2.exited
+        ) and self.touchdown_time_started == 0:
+            self.touchdown_time_started = pygame.time.get_ticks()
+            self.touchdown_time_enabled = True
+        if self.player1.exited and self.player2.exited:
             print(f"🎉 Level {self.tile_world.level_index + 1} Complete!")
             self.pause = True
-            self.ui.show_replay_button(self.screen)
-            self.ui.show_nextlv_button(self.screen)
+            self.level_complete = True
+            self.level_completed_time = pygame.time.get_ticks()
+            self.ui.show_game_result(self.screen)
 
     def restart_game(self):
         """Restarts the game after game over."""
         print("Restarting game...")
-        save_human_data(self.human, self.recording)
+        if self.human:
+            save_human_data(self.human, self.recording)
         self.running = True
         self.load_game(next_level=False)
 
     def check_game_over(self):
         """Ends the game when both players are dead."""
-        if not (self.player1.alive and self.player2.alive):
+        if not (self.player1.alive or self.player2.alive):
             print("💀💀 Both players are dead! Game over.")
             self.pause = True  # Pause game loop and wait for event
-            self.ui.show_replay_button(self.screen)
-            self.ui.show_nextlv_button(self.screen)
+            self.ui.show_game_result(self.screen)
 
     def run(self):
         """Main game loop."""
         while self.running:
             self.screen.blit(self.background_image, (0, 0))
 
-            # Always handle events
+            # Handle events
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
-                    save_human_data(self.human, self.recording)
+                    if self.human:
+                        save_human_data(self.human, self.recording)
                     pygame.quit()
                     exit()
                 elif event.type == pygame.MOUSEBUTTONDOWN:
@@ -146,8 +190,9 @@ class Game:
                 # Block player input when paused or being forced
                 if (
                     not self.pause
-                    and not self.human.is_being_forced
+                    and self.human
                     and not self.op_time_enabled
+                    and not self.human.is_being_forced
                 ):
                     if event.type == pygame.KEYDOWN:
                         self.human.move(event)
@@ -174,28 +219,29 @@ class Game:
                 # Check collisions
                 if self.player1.collision_detection(self.player1.x, self.player1.y):
                     self.player1.remove_self()
+                    if self.player1.record:
+                        self.player1.log_move(
+                            self.player1.direction, None, "death_beetle_collision"
+                        )
                     self.check_game_over()
 
                 if self.player2.collision_detection(self.player2.x, self.player2.y):
                     self.player2.remove_self()
+                    if self.player2.record:
+                        self.player2.log_move(
+                            self.player2.direction, None, "death_beetle_collision"
+                        )
                     self.check_game_over()
 
+                if self.check_timeout():
+                    # Skip the rest of the loop if there was a timeout
+                    self.pause = True
+
                 # Player 2's turn (only if it's an agent and no animations are playing)
-                if (
-                    not player1_animated
-                    and not player2_animated
-                    and isinstance(
-                        self.agent,
-                        (
-                            RuleBasedAgent,
-                            TreeBasedAgent,
-                            BehaviorClonedAgent,
-                            BehaviorClonedAgentLv2,
-                        ),
-                    )
-                ):
-                    self.agent.step()
-                    # pass
+                if not player1_animated and not player2_animated:
+                    for agent in self.agent:
+                        agent.step()
+                        # pass
 
                 # Move monsters only if game is running and no animations are playing
                 if not player1_animated and not player2_animated:
@@ -204,18 +250,21 @@ class Game:
 
                 # Check for level completion
                 self.check_level_complete()
+
             elif not self.op_time_enabled:
                 # Show Replay and Next Level buttons when paused
-                self.ui.show_replay_button(self.screen)
-                self.ui.show_nextlv_button(self.screen)
+                self.ui.show_game_result(self.screen)
             else:
                 self.ui.show_resume_button(self.screen)
 
-            # Always update UI
+            # Update UI
             self.ui.update_ui(self.screen)
             pygame.display.flip()
             self.clock.tick(settings.FPS)
-        save_human_data(self.human, self.recording)
+
+        if self.human:
+            save_human_data(self.human, self.recording)
+
         pygame.quit()
         exit()
 
@@ -225,3 +274,38 @@ class Game:
         self.player2.draw(self.screen)
         self.ui.update_ui(self.screen)
         pygame.display.flip()
+
+    def trigger_optime(self):
+        self.agent[0].get_optimized_assignments()
+
+    def check_timeout(self):
+        """Checks if the level time has expired and ends the game if so."""
+        current_time = pygame.time.get_ticks()
+
+        # Calculate elapsed time, accounting for OPTIME pauses
+        elapsed_seconds = (
+            current_time - self.ui.start_time - self.op_time_duration
+        ) / 1000  # Convert to seconds
+
+        if self.touchdown_time_enabled:
+            touchdown_seconds = (current_time - self.touchdown_time_started) / 1000
+        else:
+            touchdown_seconds = 0
+
+        if elapsed_seconds >= self.tile_world.level_time or touchdown_seconds >= 3:
+            print(f"⏰ Time's up! Level {self.tile_world.level_index + 1} failed.")
+            # Mark players as dead (timeout)
+            if self.player1.alive:
+                self.player1.alive = False
+            if self.player2.alive:
+                self.player2.alive = False
+            return True
+
+        return False
+
+    def resume_from_optime(self):
+        """Calculate and store the duration of the current OPTIME session."""
+        if self.op_time_enabled:
+            current_time = pygame.time.get_ticks()
+            optime_duration = current_time - self.op_time_start
+            self.op_time_duration += optime_duration

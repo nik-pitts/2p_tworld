@@ -1,5 +1,6 @@
 import pygame
 import time
+from collections import deque
 from src.tiles import Tile
 import src.settings as settings
 
@@ -20,6 +21,7 @@ class Player:
         self.alive = True
         self.slide_dx, self.slide_dy = 0, 0
         self.is_train = False
+        self.clicked_optime = False
 
         # force floor handling variables
         self.is_being_forced = False
@@ -46,12 +48,14 @@ class Player:
                 "DOWN": pygame.K_s,
                 "LEFT": pygame.K_a,
                 "RIGHT": pygame.K_d,
+                "STILL": pygame.K_SPACE,
             },
             2: {
                 "UP": pygame.K_UP,
                 "DOWN": pygame.K_DOWN,
                 "LEFT": pygame.K_LEFT,
                 "RIGHT": pygame.K_RIGHT,
+                "STILL": pygame.K_SPACE,
             },
         }[player_id]
 
@@ -98,9 +102,9 @@ class Player:
         new_x, new_y = self.x + dx, self.y + dy
         tile = self.tile_world.get_tile(new_x, new_y)
 
-        if not self.is_train:
-            # Remove hint when moving
-            self.tile_world.game_ui.clear_hint()
+        # if not self.is_train:
+        # Remove hint when moving
+        # self.tile_world.game_ui.clear_hint()
 
         # Socket tile handling
         if tile.tile_type == "SOCKET":
@@ -135,7 +139,7 @@ class Player:
                 move_outcome = f"success_protected_from_{tile.effect.lower()}"
             else:
                 # Player doesn't have boots, they die
-                # print(f"Player {self.player_id} {tile.effect.lower()}ed!")
+                print(f"Player {self.player_id} {tile.effect.lower()}ed!")
                 self.remove_self()
                 self.game.check_game_over()
                 move_outcome = f"death_{tile.effect.lower()}"
@@ -200,7 +204,7 @@ class Player:
             move_outcome = "success_collect_chip"
 
         # Key collection
-        if tile.tile_type == "KEY":
+        if tile.tile_type.startswith("KEY"):
             key_color = tile.effect  # This should be "RED", "BLUE", etc.
             self.tile_world.collect_key(key_color, self)
             self.tile_world.set_tile(
@@ -214,6 +218,12 @@ class Player:
                     sprite_index=(0, 0),
                 ),
             )
+
+            # Remove key from key_positions list
+            if (new_x, new_y) in self.tile_world.key_positions:
+                self.tile_world.key_positions.remove((new_x, new_y))
+                print(self.tile_world.key_positions)
+
             # Update UI inventory
             self.tile_world.remove_collectable(new_x, new_y)
             collected_position = (new_x, new_y)
@@ -221,7 +231,7 @@ class Player:
             move_outcome = f"success_collect_key_{key_color}"
 
         # Boot collection
-        if tile.tile_type == "BOOT":
+        if tile.tile_type.startswith("BOOT"):
             boot_type = tile.effect  # This will be "WATER", "FIRE", or "FORCE"
             self.boots[boot_type] = True
             # print(f"👢 Player {self.player_id} collected {boot_type} boots!")
@@ -236,6 +246,11 @@ class Player:
                     sprite_index=(0, 0),
                 ),
             )
+
+            # Remove key from key_positions list
+            if (new_x, new_y) in self.tile_world.boot_positions:
+                self.tile_world.boot_positions.remove((new_x, new_y))
+
             # Update UI inventory
             self.tile_world.remove_collectable(new_x, new_y)
             collected_position = (new_x, new_y)
@@ -243,7 +258,7 @@ class Player:
             move_outcome = f"success_collect_boot_{boot_type}"
 
         # Door handling
-        if tile.tile_type == "DOOR":
+        if tile.tile_type.startswith("DOOR"):
             door_color = tile.effect  # This should match the key color required
             if self.keys.get(door_color, False):
                 # print(f"Player {self.player_id} unlocked a {door_color} door!")
@@ -292,6 +307,7 @@ class Player:
             if self.tile_world.socket_unlocked:
                 # print(f"Player {self.player_id} escaped!")
                 self.exited = True
+                self.alive = False
                 move_outcome = "success_exit"
             else:
                 move_outcome = "blocked_exit_socket_locked"
@@ -308,7 +324,8 @@ class Player:
             move_outcome = "blocked_unwalkable"
 
         # Update player sprite based on direction
-        self.image = self.sprites[self.direction]
+        if self.direction != "STILL":
+            self.image = self.sprites[self.direction]
 
         # Log the final outcome if recording is enabled
         if self.record:
@@ -319,6 +336,18 @@ class Player:
         # Set up sliding state
         self.is_sliding = True
         self.slide_movement_queue = []
+
+        # Set direction based on initial slide direction
+        if dx == 1:
+            self.direction = "RIGHT"
+        elif dx == -1:
+            self.direction = "LEFT"
+        elif dy == 1:
+            self.direction = "DOWN"
+        elif dy == -1:
+            self.direction = "UP"
+
+        self.image = self.sprites[self.direction]
 
         # Calculate all slide positions ahead of time
         current_x, current_y = self.x, self.y
@@ -366,6 +395,8 @@ class Player:
             if effect in ["BURN", "DROWN"]:
                 # print(f"Player {self.player_id} {effect.lower()}ed while sliding!")
                 self.remove_self()
+                if self.record:
+                    self.log_move(self.direction, None, f"death_slide_{effect.lower()}")
                 self.game.check_game_over()
                 self.is_sliding = False
                 return True
@@ -374,12 +405,13 @@ class Player:
             self.x, self.y = next_x, next_y
 
             if self.record:
-                slide_state = self.get_state()
-                self.log_move("SLIDE", slide_state, "slide_movement")
+                self.log_move(self.direction, None, "slide_continue")
 
             # Check if sliding is complete
             if not self.slide_movement_queue:
                 self.is_sliding = False
+                if self.record:
+                    self.log_move(self.direction, None, "slide_complete")
 
             return True
 
@@ -397,6 +429,16 @@ class Player:
             "FORCE_LEFT": (-1, 0),
             "FORCE_RIGHT": (1, 0),
         }
+
+        direction_map = {
+            "FORCE_UP": "UP",
+            "FORCE_DOWN": "DOWN",
+            "FORCE_LEFT": "LEFT",
+            "FORCE_RIGHT": "RIGHT",
+        }
+
+        self.direction = direction_map.get(initial_force_direction, self.direction)
+        self.image = self.sprites[self.direction]  # Update the player sprite
 
         force_direction = initial_force_direction
         current_x, current_y = self.x, self.y
@@ -423,12 +465,16 @@ class Player:
             # Update force direction if on another force floor
             if next_tile.effect and next_tile.effect.startswith("FORCE_"):
                 force_direction = next_tile.effect
+                self.direction = direction_map.get(force_direction, self.direction)
             else:
                 break
 
         # Start force movement animation clock
         self.force_move_time = pygame.time.get_ticks()
         self.force_move_delay = 80  # milliseconds between steps
+
+        if self.record:
+            self.log_move(self.direction, None, f"force_movement_{self.direction}")
 
     def update_forced_movement(self):
         """Update the player's position during forced movement"""
@@ -448,16 +494,43 @@ class Player:
             if effect in ["BURN", "DROWN"]:
                 # print(f"Player {self.player_id} {effect.lower()}ed while being forced!")
                 self.remove_self()
+
+                if self.record:
+                    self.log_move(
+                        self.direction, None, f"death_forced_{effect.lower()}"
+                    )
+
                 self.game.check_game_over()
                 self.is_being_forced = False
                 return True
+
+            # Detect direction change for new force floors
+            tile = self.tile_world.get_tile(next_x, next_y)
+            if tile and tile.effect and tile.effect.startswith("FORCE_"):
+                direction_map = {
+                    "FORCE_UP": "UP",
+                    "FORCE_DOWN": "DOWN",
+                    "FORCE_LEFT": "LEFT",
+                    "FORCE_RIGHT": "RIGHT",
+                }
+                new_direction = direction_map.get(tile.effect, self.direction)
+                if new_direction != self.direction:
+                    self.direction = new_direction
+                    self.image = self.sprites[self.direction]
+
+                    # Log direction change
+                    if self.record:
+                        self.log_move(
+                            self.direction,
+                            None,
+                            f"force_direction_change_{self.direction}",
+                        )
 
             # Move player to next position
             self.x, self.y = next_x, next_y
 
             if self.record:
-                slide_state = self.get_state()
-                self.log_move("FORCED", slide_state, "force_movement")
+                self.log_move(self.direction, None, "force_movement")
 
             # If queue is empty, end forced movement
             if not self.force_movement_queue:
@@ -530,6 +603,9 @@ class Player:
         elif event.key == self.controls["RIGHT"]:
             dx = self.speed
             self.direction = "RIGHT"
+        elif event.key == self.controls["STILL"]:
+            dx, dy = 0, 0
+            self.direction = "STILL"
 
         self.process_move(dx, dy)
 
@@ -538,6 +614,8 @@ class Player:
         # Capture complete state if not provided
         if state is None:
             state = self.get_state()
+
+        state["alive"] = self.alive
 
         # Meta information (not part of the state)
         meta = {
@@ -556,42 +634,67 @@ class Player:
         )
 
     def get_state(self):
-        """Returns a comprehensive state representation for AI training."""
+        """
+        Returns a state representation for AI training.
+        Structure varies based on level for backward compatibility:
+        - Level 1: Basic state representation
+        - Level 2: Enhanced state with additional fields for advanced training
+        """
         # Get the full game grid (2D representation)
         full_grid = []
         for y in range(self.tile_world.height):
             row = []
             for x in range(self.tile_world.width):
                 tile = self.tile_world.get_tile(x, y)
-                # You could encode tiles as integers for efficiency
                 row.append(tile.tile_type if tile else "WALL")
             full_grid.append(row)
 
-        # Get other player position
+        # Get other player position (for all levels)
         other_player_pos = None
+        other_player = None
         if self.player_id == 1 and hasattr(self.game, "player2"):
-            other_player_pos = [self.game.player2.x, self.game.player2.y]
+            other_player = self.game.player2
+            other_player_pos = [other_player.x, other_player.y]
         elif self.player_id == 2 and hasattr(self.game, "player1"):
-            other_player_pos = [self.game.player1.x, self.game.player1.y]
+            other_player = self.game.player1
+            other_player_pos = [other_player.x, other_player.y]
 
-        # Only include collected keys/boots
-        collected_keys = {k: v for k, v in self.keys.items() if v}
-        collected_boots = {k: v for k, v in self.boots.items() if v}
+        # Check if we're in level 2
+        is_level_2 = (
+            hasattr(self.tile_world, "level_index") and self.tile_world.level_index == 1
+        )
 
-        # Return comprehensive state
-        return {
+        from src.agent import RLAgent  # Import here to avoid circular imports
+
+        grid_size = 6 if isinstance(self, RLAgent) else 3
+
+        # Get appropriate local grid with the specified size
+        if is_level_2 and hasattr(self.tile_world, "get_augmented_local_grid"):
+            # If using augmented grid, we'd need to modify that function too
+            local_grid = self.tile_world.get_local_grid(self.x, self.y, size=grid_size)
+        else:
+            local_grid = self.tile_world.get_local_grid(self.x, self.y, size=grid_size)
+
+        # Get appropriate local grid
+        if is_level_2 and hasattr(self.tile_world, "get_augmented_local_grid"):
+            # local_grid = self.tile_world.get_augmented_local_grid(self.x, self.y)
+            local_grid = self.tile_world.get_local_grid(self.x, self.y)
+        else:
+            local_grid = self.tile_world.get_local_grid(self.x, self.y)
+
+        # Basic state dictionary that works for any level
+        state = {
             # Player state
             "position": [self.x, self.y],
             "player_collected_chips": self.collected_chips,
             "is_sliding": self.is_sliding,
             "is_being_forced": self.is_being_forced,
-            "collected_keys": collected_keys,
-            "collected_boots": collected_boots,
             "alive": self.alive,
             # Game state
-            "full_grid": full_grid,  # Complete 2D grid
-            "local_grid": self.tile_world.get_local_grid(self.x, self.y),
+            "full_grid": full_grid,
+            "local_grid": local_grid,
             "nearest_chip": self.tile_world.find_nearest_chip(self.x, self.y, "CHIP"),
+            "chip_positions": self.tile_world.chip_positions,
             "exit_position": self.tile_world.exit_position,
             "socket_unlocked": self.tile_world.socket_unlocked,
             "total_collected_chips": self.tile_world.collected_chips,
@@ -601,6 +704,75 @@ class Player:
             "other_player_position": other_player_pos,
             "player_id": self.player_id,
         }
+
+        # For level 1, use empty dictionaries for keys and boots
+        if not is_level_2:
+            state["collected_keys"] = {}
+            state["collected_boots"] = {}
+            return state
+
+        # ==========================================
+        # Additional fields for level 2 only below
+        # ==========================================
+
+        # Get collected keys/boots
+        collected_keys = {k: v for k, v in self.keys.items() if v}
+        collected_boots = {k: v for k, v in self.boots.items() if v}
+        state["collected_keys"] = collected_keys
+        state["collected_boots"] = collected_boots
+
+        nearest_key = self.tile_world.find_nearest_chip(self.x, self.y, "KEY")
+        nearest_boot = self.tile_world.find_nearest_chip(self.x, self.y, "BOOT")
+        state["nearest_key"] = nearest_key
+        state["nearest_boot"] = nearest_boot
+
+        # Get elapsed time
+        time_elapsed = 0
+        if hasattr(self.game, "start_time"):
+            time_elapsed = pygame.time.get_ticks() - self.game.start_time
+        elif hasattr(self.game, "clock"):
+            # Try to get time, handle both direct attribute and method
+            if isinstance(self.game.clock, (int, float)):
+                time_elapsed = self.game.clock
+            elif hasattr(self.game.clock, "get_time"):
+                time_elapsed = self.game.clock.get_time()
+        state["time_elapsed"] = time_elapsed
+
+        # Get item assignments
+        player_item_assignments = []
+        if hasattr(self.game, "ui") and hasattr(self.game.ui, "get_my_assignments"):
+            player_item_assignments = self.game.ui.get_my_assignments(
+                self, self.player_id, self.x, self.y
+            )
+        state["player_item_assignments"] = player_item_assignments
+
+        # Get other player data
+        other_player_collected_chips = 0
+        other_player_collected_keys = {}
+        other_player_collected_boots = {}
+
+        if other_player:
+            other_player_collected_chips = other_player.collected_chips
+            other_player_collected_keys = {
+                k: v for k, v in other_player.keys.items() if v
+            }
+            other_player_collected_boots = {
+                k: v for k, v in other_player.boots.items() if v
+            }
+
+        state["other_player_collected_chips"] = other_player_collected_chips
+        state["other_player_collected_keys"] = other_player_collected_keys
+        state["other_player_collected_boots"] = other_player_collected_boots
+
+        # Goal position for layered training
+        goal_pos = [-1, -1]  # Default invalid position
+        if player_item_assignments and len(player_item_assignments) > 0:
+            first_assignment = player_item_assignments[0]
+            if "position" in first_assignment:
+                goal_pos = first_assignment["position"]
+        state["goal_pos"] = goal_pos
+
+        return state
 
     def remove_self(self):
         # Restore the tile to its original state
@@ -636,3 +808,44 @@ class Player:
 
     def set_child_attribute(self, value):
         self.is_train = value
+
+    def calculate_path_length(self, start_x, start_y, target_x, target_y):
+        """Calculate actual path length considering walls and obstacles."""
+        queue = deque([(start_x, start_y, 0)])  # (x, y, steps)
+        visited = set([(start_x, start_y)])
+        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]  # Down, Right, Up, Left
+
+        while queue:
+            x, y, steps = queue.popleft()
+
+            if x == target_x and y == target_y:
+                return steps  # Found the target
+
+            for dx, dy in directions:
+                nx, ny = x + dx, y + dy
+                if (nx, ny) not in visited:
+                    tile = self.tile_world.get_tile(nx, ny)
+                    if tile and tile.walkable:
+                        visited.add((nx, ny))
+                        queue.append((nx, ny, steps + 1))
+
+        return float("inf")  # No path found
+
+    def get_optimized_assignments(self):
+        """Assign collectibles based on actual path length."""
+        self.assignments = {}
+
+        for item_pos in self.tile_world.prev_collectable_list:
+            # Calculate actual path lengths
+            p1_steps = self.calculate_path_length(
+                self.game.player1.x, self.game.player1.y, item_pos[0], item_pos[1]
+            )
+
+            p2_steps = self.calculate_path_length(
+                self.game.player2.x, self.game.player2.y, item_pos[0], item_pos[1]
+            )
+
+            # Assign to player with shorter path
+            player_id = 1 if p1_steps < p2_steps else 2
+            tile = self.tile_world.get_tile(item_pos[0], item_pos[1])
+            self.assignments[item_pos] = (player_id, tile.get_sprite())

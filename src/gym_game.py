@@ -2,7 +2,7 @@ import os
 import pygame
 import src.settings as settings
 from src.tiles import TileSpriteSheet, TileWorld
-from src.agent import BehaviorClonedAgent
+from src.agent import BehaviorClonedAgent, RLAgent
 import numpy as np
 
 
@@ -39,7 +39,7 @@ class GymGame:
 
         # Track steps for the current episode
         self.steps = 0
-        self.max_steps = 1000  # Maximum steps before ending episode
+        self.max_steps = 200  # Maximum steps before ending episode
 
         self.action_mapping = {0: "UP", 1: "DOWN", 2: "LEFT", 3: "RIGHT"}
 
@@ -63,19 +63,25 @@ class GymGame:
             self,
             1,
             self.p1_bc_model_path,
-            is_train=True,
+            is_train=False,
         )
 
-        # Create player 2 - Fixed BC agent
-        self.player2 = BehaviorClonedAgent(
+        # Create player 2 - RL Agent that will learn from scratch
+        self.player2 = RLAgent(
             player_positions[1][0],
             player_positions[1][1],
             self.tile_world,
             self,
             2,
-            self.p2_bc_model_path,
             is_train=True,
         )
+
+        # Initialize player2 training variables
+        self.player2.prev_collected_chips = 0
+        self.player2.max_distance_from_start = 0
+        self.player2.prev_position = (self.player2.x, self.player2.y)
+        self.player2.stuck_count = 0
+        self.player2.visited_positions = set()
 
         # Set up the minimal UI for tile_world to function
         # Some game mechanics reference UI
@@ -89,12 +95,6 @@ class GymGame:
             },
         )()
         self.tile_world.game_ui = dummy_ui
-
-        # P1 related varaible for training
-        self.player1.prev_collected_chips = 0
-        self.player1.max_distance_from_start = 0
-        self.player1.prev_position = (self.player1.x, self.player1.y)
-        self.player1.stuck_count = 0
 
         # Reset game state
         self.steps = 0
@@ -113,19 +113,20 @@ class GymGame:
         self.steps += 1
 
         # Save previous state for reward calculation
-        prev_chips_collected = self.tile_world.collected_chips
+        prev_chips_collected = self.player2.collected_chips
         prev_socket_unlocked = self.tile_world.socket_unlocked
-        prev_player1_alive = self.player1.alive
+        prev_player2_alive = self.player2.alive
 
-        # Process player 1 action (from RL policy)
+        # Process player 1 action (from fixed BC model)
         # Use predicted action
-        self.player1.step(self.action_mapping[action])
+        p1_action = self.player1.predict_action()
+        self.player1.step(p1_action)
 
-        # Process player 2 action (from fixed BC model)
+        # Process player 2 action (from RL model)
         # Get action from internal model
-        p2_action = self.player2.predict_action()
+        p2_action = action
         # Execute the action
-        self.player2.step(p2_action)
+        self.player2.step(self.action_mapping[p2_action])
 
         # Only applies to level 1
         if self.tile_world.level_index == 1:
@@ -156,12 +157,14 @@ class GymGame:
         reward = self._calculate_reward(
             prev_chips_collected,
             prev_socket_unlocked,
-            prev_player1_alive,
+            prev_player2_alive,
             level_complete,
         )
 
         # Check if episode is done
-        done = level_complete or game_over or self.steps >= self.max_steps
+        terminated = level_complete or game_over or self.steps >= self.max_steps
+
+        truncated = self.steps >= self.max_steps
 
         # Get observation
         observation = self._get_observation()
@@ -184,7 +187,7 @@ class GymGame:
             else None,
         }
 
-        return observation, reward, done, info
+        return observation, reward, terminated, truncated, info
 
     def check_level_complete(self):
         """Checks if either player has reached the exit."""
@@ -198,116 +201,101 @@ class GymGame:
             return True
         return False
 
-    def _calculate_reward(self, prev_chips, prev_socket, prev_p1_alive, level_complete):
-        """Calculate reward based on state changes with emphasis on active cooperation"""
+    def _calculate_reward(self, prev_chips, prev_socket, prev_alive, level_complete):
+        """
+        Reward function focused on efficient level completion:
+        1. Collect chips (necessary)
+        2. Unlock sockets (necessary)
+        3. Complete level as quickly as possible
+
+        Parameters are the same as before
+        """
         reward = 0
 
-        # Reward for collecting chips specifically by player1 (RL agent)
-        if self.player1.collected_chips > self.player1.prev_collected_chips:
-            chips_collected_by_p1 = (
-                self.player1.collected_chips - self.player1.prev_collected_chips
-            )
-            reward += 2.0 * chips_collected_by_p1
+        # Get current state
+        curr_chips = self.player2.collected_chips
+        curr_socket = self.tile_world.socket_unlocked
+        curr_alive = self.player2.alive
+        curr_pos = (self.player2.x, self.player2.y)
 
-        # Smaller reward for teammate collecting chips (still want cooperative behavior)
-        if self.tile_world.collected_chips > prev_chips:
-            reward += 0.5
+        # Track if agent is stuck (oscillating between positions)
+        if not hasattr(self.player2, "prev_position"):
+            self.player2.prev_position = curr_pos
+            self.player2.stuck_count = 0
 
-        # Reward for unlocking socket - higher reward if player1 collected critical chips
-        if self.tile_world.socket_unlocked and not prev_socket:
-            # Check if player1 collected at least half the chips
-            if self.player1.collected_chips >= self.tile_world.total_chips / 2:
-                reward += 8.0  # Higher reward for significant contribution
-            else:
-                reward += 3.0  # Lower reward if mostly carried by player2
-
-        # Movement and exploration rewards
-        # Distance from starting position
-        start_pos = self.tile_world.player_positions[0]
-        current_pos = (self.player1.x, self.player1.y)
-        manhattan_distance = abs(current_pos[0] - start_pos[0]) + abs(
-            current_pos[1] - start_pos[1]
-        )
-
-        # Small reward for exploration
-        if manhattan_distance > self.player1.max_distance_from_start:
-            self.player1.max_distance_from_start = manhattan_distance
-            reward += 0.2  # Reward for exploring new areas
-
-        # Proximity reward for getting closer to objectives
-        if not self.tile_world.socket_unlocked:
-            # Reward for getting closer to chips if socket isn't unlocked
-            nearest_chip = self.tile_world.find_nearest_chip(
-                self.player1.x, self.player1.y, "CHIP"
-            )
-            if nearest_chip != (-1, -1):  # If there are chips left
-                if hasattr(self.player1, "prev_chip_distance"):
-                    prev_distance = self.player1.prev_chip_distance
-                    current_distance = abs(self.player1.x - nearest_chip[0]) + abs(
-                        self.player1.y - nearest_chip[1]
-                    )
-                    if current_distance < prev_distance:
-                        reward += 0.1  # Small reward for moving toward chips
-                    self.player1.prev_chip_distance = current_distance
-                else:
-                    # Initialize on first call
-                    self.player1.prev_chip_distance = abs(
-                        self.player1.x - nearest_chip[0]
-                    ) + abs(self.player1.y - nearest_chip[1])
+        if self.player2.prev_position == curr_pos:
+            self.player2.stuck_count += 1
         else:
-            # If socket is unlocked, reward for moving toward exit
-            exit_pos = self.tile_world.exit_position
-            if hasattr(self.player1, "prev_exit_distance"):
-                prev_distance = self.player1.prev_exit_distance
-                current_distance = abs(self.player1.x - exit_pos[0]) + abs(
-                    self.player1.y - exit_pos[1]
-                )
-                if current_distance < prev_distance:
-                    reward += 0.15  # Reward for moving toward exit
-                self.player1.prev_exit_distance = current_distance
-            else:
-                self.player1.prev_exit_distance = abs(
-                    self.player1.x - exit_pos[0]
-                ) + abs(self.player1.y - exit_pos[1])
-
-        # Reward for level completion - scale by player1's contribution
-        if level_complete:
-            # Base completion reward
-            completion_reward = 15.0
-
-            # Bonus for player1 actively contributing (exiting or collecting chips)
-            if self.player1.exited:
-                reward += completion_reward * 10  # Highest reward if player1 exits
-            elif self.player1.collected_chips > 0:
-                # Scale reward by proportion of chips collected
-                contribution_ratio = self.player1.collected_chips / max(
-                    1, self.tile_world.total_chips
-                )
-                reward += completion_reward * (0.5 + contribution_ratio)
-            else:
-                # Minimal reward for completion without contribution
-                reward += completion_reward * 0.3
-
-        # Penalty for player death
-        if prev_p1_alive and not self.player1.alive:
-            reward -= 10.0  # Severe penalty for dying
-
-        # Penalty for getting stuck or not moving
-        if hasattr(self.player1, "prev_position"):
-            if self.player1.prev_position == (self.player1.x, self.player1.y):
-                self.player1.stuck_count += 1
-                if self.player1.stuck_count > 3:  # If stuck for multiple steps
-                    reward -= 10 * self.player1.stuck_count  # Increasing penalty
-            else:
-                self.player1.stuck_count = 0
+            self.player2.stuck_count = 0
 
         # Update previous position
-        self.player1.prev_position = (self.player1.x, self.player1.y)
-        self.player1.prev_collected_chips = self.player1.collected_chips
+        self.player2.prev_position = curr_pos
 
-        # Time pressure - increasing penalty as steps increase
-        time_penalty = min(0.05, 0.01 * (self.steps / 30))  # Gradually increases
-        reward -= time_penalty
+        # ----- MAJOR REWARD COMPONENTS -----
+
+        # 1. Chip Collection - Essential task
+        if curr_chips > prev_chips:
+            # Reward for collecting a chip (higher value to emphasize importance)
+            reward += 30
+            self.prev_collected_chips = curr_chips
+            print(
+                f"Totoal: {self.tile_world.collected_chips}, Prev:{prev_chips}, Curr:{curr_chips} Collected!"
+            )
+
+        # 2. Socket Unlock - Critical milestone
+        if curr_socket and not prev_socket:
+            # Big reward for unlocking socket
+            reward += 50.0
+            print("Socket Unlocked!")
+
+        # 3. Level Completion - Primary goal with strong efficiency incentive
+        if level_complete:
+            # Base reward for completion
+            completion_reward = 100.0
+
+            # Apply significant step penalty for efficiency
+            # This creates a curve where faster completions get much higher rewards
+            # For example:
+            # - Complete in 100 steps: reward = 100 * (1.0 - (100/1000)^0.5) = 68.4
+            # - Complete in 500 steps: reward = 100 * (1.0 - (500/1000)^0.5) = 29.3
+            efficiency_factor = (
+                self.steps / self.max_steps
+            ) ** 0.5  # Square root for gentler curve
+            time_bonus = completion_reward * (1.0 - efficiency_factor)
+
+            reward += time_bonus
+
+            print(
+                f"Level Complete in {self.steps} steps! Efficiency bonus: {time_bonus:.1f}"
+            )
+
+        # ----- PENALTIES -----
+
+        # 1. Step penalty - INCREASED to discourage long episodes
+        # This is critical for encouraging efficiency
+        step_penalty = 0.1  # Increased from 0.02
+        reward -= step_penalty
+
+        # 2. Stuck penalty - Discourage oscillating in place
+        if self.player2.stuck_count > 3:
+            stuck_penalty = 0.2 * self.player2.stuck_count  # Increased multiplier
+            reward -= min(2.0, stuck_penalty)  # Increased cap
+
+        # 3. Death penalty - Severe to avoid deaths
+        if not curr_alive and prev_alive:
+            # print("Player 2 died!")
+            reward -= 20.0  # Increased from 10.0
+
+        # ----- MINOR REWARD COMPONENTS -----
+
+        # Only reward movement if it's toward an unexplored area or objective
+        # Instead of rewarding distance from start
+        # Check if position is new
+        pos_tuple = curr_pos
+        if pos_tuple not in self.player2.visited_positions:
+            # Small reward for exploring new positions
+            reward += 0.5
+            self.player2.visited_positions.add(pos_tuple)
 
         return reward
 
@@ -318,14 +306,10 @@ class GymGame:
         Includes both player1's state and knowledge about player2
         """
         # Get player1's state vector (includes knowledge of player2)
-        state_vector = self.player1.get_state_vector().squeeze(0).detach().numpy()
-
-        # Add additional information about player2
-        p2_collected = np.array([self.player2.collected_chips])  # 1
-        p2_alive = np.array([float(self.player2.alive)])  # 1
+        state_vector = self.player2.get_state_vector().squeeze(0).detach().numpy()
 
         # Concatenate to create full observation
-        return np.concatenate([state_vector, p2_collected, p2_alive])
+        return state_vector
 
     def reset(self):
         """Reset the game to initial state and return initial observation"""

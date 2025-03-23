@@ -11,21 +11,21 @@ TILE_MAPPING = {
     12: ("ICE", True, (0, 12), "SLIDE", False),  # Ice, player slides
     47: ("HINT", True, (2, 15), "HINT", False),  # Hint tile
     110: ("PLAYER", True, None, None, False),  # Player (handled separately)
-    100: ("KEY", True, (6, 4), "BLUE", True),  # Key, unlocks BLUE door
-    101: ("KEY", True, (6, 5), "RED", True),  # Key, unlocks RED door
-    102: ("KEY", True, (6, 6), "GREEN", True),  # Key, unlocks GREEN door
-    103: ("KEY", True, (6, 7), "YELLOW", True),  # Key, unlocks YELLOW door
-    22: ("DOOR", False, (1, 7), "RED", False),  # Door, requires key
-    23: ("DOOR", False, (1, 6), "BLUE", False),  # Door, requires key
-    24: ("DOOR", False, (1, 8), "GREEN", False),  # Door, requires key
-    25: ("DOOR", False, (1, 9), "YELLOW", False),  # Door, requires key
+    100: ("KEY_BLUE", True, (6, 4), "BLUE", True),  # Key, unlocks BLUE door
+    101: ("KEY_RED", True, (6, 5), "RED", True),  # Key, unlocks RED door
+    102: ("KEY_GREEN", True, (6, 6), "GREEN", True),  # Key, unlocks GREEN door
+    103: ("KEY_YELLOW", True, (6, 7), "YELLOW", True),  # Key, unlocks YELLOW door
+    23: ("DOOR_RED", False, (1, 7), "RED", False),  # Door, requires key
+    22: ("DOOR_BLUE", False, (1, 6), "BLUE", False),  # Door, requires key
+    24: ("DOOR_GREEN", False, (1, 8), "GREEN", False),  # Door, requires key
+    25: ("DOOR_YELLOW", False, (1, 9), "YELLOW", False),  # Door, requires key
     13: ("FORCE_FLOOR", True, (0, 13), "FORCE_DOWN", False),  # Force floor
     18: ("FORCE_FLOOR", True, (1, 2), "FORCE_UP", False),  # Force floor
     19: ("FORCE_FLOOR", True, (1, 3), "FORCE_RIGHT", False),  # Force floor
     20: ("FORCE_FLOOR", True, (1, 4), "FORCE_LEFT", False),  # Force floor
-    104: ("BOOT", True, (6, 8), "WATER", True),  # Boot, allows walking on ice
-    105: ("BOOT", True, (6, 9), "FIRE", True),  # Boot, protects from fire
-    107: ("BOOT", True, (6, 11), "FORCE", True),  # Boot, no force
+    104: ("BOOT_WATER", True, (6, 8), "WATER", True),  # Boot, allows walking on ice
+    105: ("BOOT_FIRE", True, (6, 9), "FIRE", True),  # Boot, protects from fire
+    107: ("BOOT_FORCE", True, (6, 11), "FORCE", True),  # Boot, no force
     64: ("BEETLE_NORTH", False, (4, 0), "BEETLE_UP", False),  # Beetle, moves north
     65: ("BEETLE_WEST", False, (4, 1), "BEETLE_LEFT", False),  # Beetle, moves west
     66: ("BEETLE_SOUTH", False, (4, 2), "BEETLE_DOWN", False),  # Beetle, moves south

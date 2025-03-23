@@ -61,6 +61,8 @@ class TileWorld:
         self.level_data = self.load_level_data()  # Load JSON once
         self.level_index = 0  # Track current level
         self.chip_positions = []
+        self.key_positions = []
+        self.boot_positions = []
         self.exit_position = None
 
     def load_level_data(self):
@@ -79,6 +81,7 @@ class TileWorld:
         self.width = 0  # Width of the level
         self.height = 0  # Height of the level
         self.board = []  # Reset board
+        self.prev_collectable_list = []
         self.collectable_list = []  # Reset collectable list
 
     def load_level(self, level_index):
@@ -129,6 +132,12 @@ class TileWorld:
                     # Store chip positions
                     if tile_type.startswith("CHIP"):
                         self.chip_positions.append((x, y))
+
+                    if tile_type.startswith("KEY"):
+                        self.key_positions.append((x, y))
+
+                    if tile_type.startswith("BOOT"):
+                        self.boot_positions.append((x, y))
 
                     # Store exit position
                     if tile_type == "EXIT":
@@ -207,6 +216,26 @@ class TileWorld:
             )
             return nearest_chip
 
+        elif target_type == "KEY":
+            if len(self.key_positions) == 0:
+                return (-1, -1)
+            # Find the closest chip using index difference
+            nearest_key = min(
+                self.key_positions,
+                key=lambda chip: abs(chip[0] - player_x) + abs(chip[1] - player_y),
+            )
+            return nearest_key
+
+        elif target_type == "BOOT":
+            if len(self.boot_positions) == 0:
+                return (-1, -1)
+            # Find the closest chip using index difference
+            nearest_boot = min(
+                self.boot_positions,
+                key=lambda chip: abs(chip[0] - player_x) + abs(chip[1] - player_y),
+            )
+            return nearest_boot
+
     def is_valid_position(self, x, y):
         return (
             0 <= x < self.width
@@ -250,13 +279,142 @@ class TileWorld:
             self.collectable_list.remove((x, y))
             # print(f"Item at ({x}, {y}) removed from collectable list")
 
-    def get_local_grid(self, x, y):
+    def get_local_grid(self, x, y, size=3):
         """Helper to get local grid view around player."""
         local_grid = []
-        for dy in range(-1, 2):
+        radius = size // 2
+
+        for dy in range(-radius, radius + 1):
             row = []
-            for dx in range(-1, 2):
+            for dx in range(-radius, radius + 1):
                 tile = self.get_tile(x + dx, y + dy)
                 row.append(tile.tile_type if tile else "WALL")
             local_grid.append(row)
         return local_grid
+
+    def get_beetle_info(self, x, y):
+        # 3. MONSTER AWARENESS - Track positions and directions of nearby beetles
+        beetle_positions = []
+        beetle_directions = []
+        for beetle in self.beetles:
+            # Calculate relative position to player (better for learning spatial relationships)
+            # rel_x = beetle.x - x
+            # rel_y = beetle.y - y
+            beetle_positions.append([beetle.x, beetle.y])
+
+            # Encode direction as one-hot
+            direction_one_hot = [0, 0, 0, 0]  # [UP, DOWN, LEFT, RIGHT]
+            if beetle.direction == "UP":
+                direction_one_hot[0] = 1
+            elif beetle.direction == "DOWN":
+                direction_one_hot[1] = 1
+            elif beetle.direction == "LEFT":
+                direction_one_hot[2] = 1
+            elif beetle.direction == "RIGHT":
+                direction_one_hot[3] = 1
+            beetle_directions.append(direction_one_hot)
+
+        # Flatten beetle information
+        beetle_info = [
+            item for sublist in beetle_positions + beetle_directions for item in sublist
+        ]
+
+        return beetle_info
+
+    def get_augmented_local_grid(self, x, y):
+        # Enhanced Local Grid with more information
+        # One-hot encoding for tile types
+        tile_mapping = {
+            "WALL": [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            "FLOOR": [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            "CHIP": [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            "EXIT": [0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0],
+            "SOCKET": [0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0],
+            "WATER": [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0],
+            "FIRE": [0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            "ICE": [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+            "FORCE_FLOOR": [0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0],
+            "DOOR": [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0],
+            "KEY": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0],
+            "MOVABLE_DIRT_BLOCK": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
+            # Default for unknown tiles
+            "DEFAULT": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        }
+
+        local_grid_features = []
+        for dy in range(-2, 3):
+            for dx in range(-2, 3):
+                nx, ny = x + dx, y + dy
+                tile = self.get_tile(nx, ny)
+
+                # Basic tile type
+                tile_type = tile.tile_type if tile else "WALL"
+                tile_encoding = tile_mapping.get(tile_type, tile_mapping["DEFAULT"])
+
+                # Add special effect information
+                if tile and tile.effect:
+                    effect_encoding = [
+                        0,
+                        0,
+                        0,
+                        0,
+                    ]  # [Directional, Hazard, Collectable, Interactive]
+
+                    # Directional effects (force floors, one-ways)
+                    if tile.effect.startswith("FORCE_"):
+                        effect_encoding[0] = 1
+                        # Add direction information
+                        if "UP" in tile.effect:
+                            effect_encoding.append(1)
+                        else:
+                            effect_encoding.append(0)
+                        if "DOWN" in tile.effect:
+                            effect_encoding.append(1)
+                        else:
+                            effect_encoding.append(0)
+                        if "LEFT" in tile.effect:
+                            effect_encoding.append(1)
+                        else:
+                            effect_encoding.append(0)
+                        if "RIGHT" in tile.effect:
+                            effect_encoding.append(1)
+                        else:
+                            effect_encoding.append(0)
+                    else:
+                        effect_encoding.extend([0, 0, 0, 0])
+
+                    # Hazard effects
+                    if tile.effect in ["BURN", "DROWN"]:
+                        effect_encoding[1] = 1
+
+                    # Collectable effects
+                    if tile.effect in [
+                        "COLLECT",
+                        "RED",
+                        "BLUE",
+                        "GREEN",
+                        "YELLOW",
+                        "WATER",
+                        "FIRE",
+                        "FORCE",
+                    ]:
+                        effect_encoding[2] = 1
+
+                    # Interactive effects
+                    if tile.effect in ["PUSH", "HINT", "UNLOCK"]:
+                        effect_encoding[3] = 1
+                else:
+                    # No effect
+                    effect_encoding = [0, 0, 0, 0, 0, 0, 0, 0]
+
+                # Check for beetles at this position
+                beetle_here = 0
+                for beetle in self.beetles:
+                    if beetle.x == nx and beetle.y == ny:
+                        beetle_here = 1
+                        break
+
+                # Combine all encodings for this tile
+                tile_features = tile_encoding + effect_encoding + [beetle_here]
+                local_grid_features.extend(tile_features)
+        return local_grid_features

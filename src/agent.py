@@ -1,10 +1,12 @@
 from collections import deque
+import heapq
 import torch
 import random
 import pygame
 from src.player import Player
 from src.models import BehaviorCloningModel, BehaviorCloningModelLv2
 from src.tile_definitions import TILE_MAPPING
+import torch.nn.functional as F
 
 
 class RuleBasedAgent(Player):
@@ -228,7 +230,17 @@ class TreeBasedAgent(Player):
 
 
 class BehaviorClonedAgent(Player):
-    def __init__(self, x, y, tile_world, game, player_id, model_path, is_train=False):
+    def __init__(
+        self,
+        x,
+        y,
+        tile_world,
+        game,
+        player_id,
+        model_path,
+        is_train=False,
+        alignment=0,
+    ):
         super().__init__(x, y, tile_world, game, player_id)
 
         # Import the pre-trained Behavior Cloning model
@@ -241,10 +253,15 @@ class BehaviorClonedAgent(Player):
             self.tile_type_to_id[tile_type] = tile_id
 
         self.action_mapping = {0: "UP", 1: "DOWN", 2: "LEFT", 3: "RIGHT"}
-        self.cooldown = 300  # 500ms
+        self.cooldown = 400  # 500ms
         self.last_step_time = pygame.time.get_ticks()
         self.is_train = is_train
+        self.alignment = alignment  # 0: aligned, 1: merged, 2: diverged
         self.set_child_attribute(self.is_train)  # Pass child's attribute to parent
+
+        # Add only essential A* pathfinding variables
+        self.path = []  # Queue of moves to follow
+        self.current_target = None
 
     def load_model(self, model_path):
         """Load a pre-trained Behavior Cloning model."""
@@ -270,14 +287,14 @@ class BehaviorClonedAgent(Player):
         full_grid_tensor = torch.tensor(full_grid, dtype=torch.float32)
 
         # Process the local grid
-        full_grid = []
+        local_grid = []
         for row in state["local_grid"]:
             processed_row = []
             for tile_type in row:
                 # Map to integer using the updated tile definitions
                 processed_row.append(self.tile_type_to_id.get(tile_type, 1))
-            full_grid.append(processed_row)
-        local_grid_tensor = torch.tensor(full_grid, dtype=torch.float32)
+            local_grid.append(processed_row)
+        local_grid_tensor = torch.tensor(local_grid, dtype=torch.float32)
 
         # Convert all components to tensors in the exact order expected by the model
         position = torch.tensor(state["position"], dtype=torch.float32)
@@ -326,24 +343,59 @@ class BehaviorClonedAgent(Player):
         return self.action_mapping[action_idx]
 
     def step(self, action=None):
-        if not self.is_train:
-            """Choose and execute an action after cooldown period"""
-            current_time = pygame.time.get_ticks()
-            if current_time - self.last_step_time < self.cooldown:
-                return
-
-            self.last_step_time = current_time
-
-        # Predict the next action
-        if action is None:
-            action = self.predict_action()
-
         movement = {
             "UP": (0, -1),
             "DOWN": (0, 1),
             "LEFT": (-1, 0),
             "RIGHT": (1, 0),
         }
+
+        if not self.is_train:
+            """Choose and execute an action after cooldown period"""
+            current_time = pygame.time.get_ticks()
+            if current_time - self.last_step_time < self.cooldown:
+                return
+            self.last_step_time = current_time
+
+            # Check if we need to update our path
+            if not self.path:
+                # Get my assignments
+                my_assignments = self.get_my_assignments()
+                # If we have assignments, use A* pathfinding
+                if my_assignments:
+                    print(f"Agent {self.player_id} has assignments: {my_assignments}")
+                    # Sort assignments by distance to find closest target
+                    my_assignments.sort(
+                        key=lambda pos: self.manhattan_distance((self.x, self.y), pos)
+                    )
+                    self.current_target = my_assignments[0]
+
+                    # Calculate path to target
+                    self.path = self.a_star_search(
+                        (self.x, self.y), self.current_target
+                    )
+
+            # If we have a path to follow (A* mode)
+            if self.path:
+                # Get next direction from path
+                next_move = self.path[0]
+                self.path = self.path[1:]  # Remove this step
+
+                # Execute the move
+                self.direction = next_move
+                dx, dy = movement[next_move]
+                self.process_move(dx, dy)
+
+                # If we reached the target, clear it
+                if self.current_target and (self.x, self.y) == self.current_target:
+                    self.current_target = None
+                    self.path = []
+
+                return
+
+        # Predict the next action
+        if action is None:
+            action = self.predict_action()
 
         if action in movement:
             dx, dy = movement[action]
@@ -352,10 +404,138 @@ class BehaviorClonedAgent(Player):
         else:
             pass
 
+    def manhattan_distance(self, a, b):
+        """Calculate Manhattan distance between two points."""
+        return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+    def a_star_search(self, start, goal):
+        """
+        A* pathfinding algorithm to find the optimal path from start to goal.
+
+        Args:
+            start (tuple): (x, y) starting position
+            goal (tuple): (x, y) goal position
+
+        Returns:
+            list: List of directions to take from start to goal
+        """
+        # Check if goal is valid
+        goal_tile = self.tile_world.get_tile(goal[0], goal[1])
+        if not goal_tile:
+            return []
+
+        # Define directions: Up, Down, Left, Right
+        directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
+        direction_names = ["UP", "DOWN", "LEFT", "RIGHT"]
+
+        # Initialize open and closed sets
+        open_set = []
+        heapq.heappush(open_set, (0, start, []))  # (f_score, position, path)
+        closed_set = set()
+
+        # g_score: cost from start to current
+        g_score = {start: 0}
+
+        # Limit search to prevent infinite loops
+        max_iterations = 1000
+        iterations = 0
+
+        while open_set and iterations < max_iterations:
+            iterations += 1
+
+            # Get node with lowest f_score
+            f, current, path = heapq.heappop(open_set)
+
+            # If we reached the goal, return the path
+            if current == goal:
+                return path
+
+            # Skip if already processed
+            if current in closed_set:
+                continue
+
+            # Mark as processed
+            closed_set.add(current)
+
+            # Try each direction
+            for i, (dx, dy) in enumerate(directions):
+                neighbor = (current[0] + dx, current[1] + dy)
+
+                # Check if the neighbor is valid
+                if not (
+                    0 <= neighbor[0] < self.tile_world.width
+                    and 0 <= neighbor[1] < self.tile_world.height
+                ):
+                    continue
+
+                # Check if the neighbor is walkable
+                neighbor_tile = self.tile_world.get_tile(neighbor[0], neighbor[1])
+                if not neighbor_tile or not neighbor_tile.walkable:
+                    # Special case: allow socket if unlocked
+                    if (
+                        neighbor_tile
+                        and neighbor_tile.tile_type == "SOCKET"
+                        and self.tile_world.socket_unlocked
+                    ):
+                        pass  # Allow this move
+                    else:
+                        continue  # Invalid or unwalkable
+
+                # Handle hazards (fire and water)
+                if neighbor_tile.effect == "BURN" and not self.boots.get("FIRE", False):
+                    continue  # Skip fire tiles if we don't have fire boots
+
+                if neighbor_tile.effect == "DROWN" and not self.boots.get(
+                    "WATER", False
+                ):
+                    continue  # Skip water tiles if we don't have water boots
+
+                # Calculate tentative g_score
+                tentative_g = g_score[current] + 1
+
+                # If this path is better than any previous one
+                if neighbor not in g_score or tentative_g < g_score[neighbor]:
+                    g_score[neighbor] = tentative_g
+                    f_score = tentative_g + self.manhattan_distance(neighbor, goal)
+
+                    # Add to open set with updated path
+                    new_path = path + [direction_names[i]]
+                    heapq.heappush(open_set, (f_score, neighbor, new_path))
+
+        # No path found
+        return []
+
+    def get_my_assignments(self):
+        """Get assignments for this player only from the UI."""
+        # Check if UI has item assignments
+        if hasattr(self.game, "ui") and hasattr(self.game.ui, "item_assignments"):
+            item_assignments = self.game.ui.item_assignments
+            my_assignments = []
+
+            # Format: {(x, y): (player_id, sprite)}
+            for pos, assignment_info in item_assignments.items():
+                player_id = assignment_info[0]  # First element is player_id
+                if player_id == self.player_id:
+                    my_assignments.append(pos)
+
+            return my_assignments
+
+        # No assignments found
+        return []
+
 
 class BehaviorClonedAgentLv2(Player):
     def __init__(
-        self, x, y, tile_world, game, player_id, model_path, normalize_features=True
+        self,
+        x,
+        y,
+        tile_world,
+        game,
+        player_id,
+        model_path,
+        is_train=False,
+        alignment=0,
+        normalize_features=False,
     ):
         super().__init__(x, y, tile_world, game, player_id)
 
@@ -365,19 +545,23 @@ class BehaviorClonedAgentLv2(Player):
 
         # Create reverse mapping (tile_type -> ID) from TILE_MAPPING
         self.tile_type_to_id = {}
-        for tile_id, (tile_type, _, _, _, _) in TILE_MAPPING.items():
-            self.tile_type_to_id[tile_type] = tile_id
+        for tile_id, (tile_type, _, _, effect, _) in TILE_MAPPING.items():
+            # Handle special cases with effects
+            if effect and effect.startswith("BEETLE_"):
+                full_type = f"BEETLE_{effect.split('_')[1]}"
+                self.tile_type_to_id[full_type] = tile_id
+            elif effect and effect.startswith("FORCE_"):
+                self.tile_type_to_id["FORCE_FLOOR"] = tile_id
+            else:
+                self.tile_type_to_id[tile_type] = tile_id
 
-        self.action_mapping = {
-            0: "UP",
-            1: "DOWN",
-            2: "LEFT",
-            3: "RIGHT",
-            4: "FORCED",
-            5: "SLIDE",
-        }
-        self.cooldown = 500  # 500ms
+        # Action mapping including special states
+        self.action_mapping = {0: "UP", 1: "DOWN", 2: "LEFT", 3: "RIGHT"}
+
+        self.cooldown = 250  # 500ms between actions
         self.last_step_time = pygame.time.get_ticks()
+        self.is_train = is_train
+        self.alignment = alignment  # 0: aligned, 1: merged, 2: diverged
 
         # Feature normalization option
         self.normalize_features = normalize_features
@@ -386,28 +570,41 @@ class BehaviorClonedAgentLv2(Player):
         if self.normalize_features:
             self.calculate_normalization_stats()
 
-    def load_model(self, model_path):
-        """Load a pre-trained Behavior Cloning model."""
-        input_size = 200
+        # Debug mode for development
+        self.debug_mode = False
 
-        model = BehaviorCloningModelLv2(input_size, 6)
-        model.load_state_dict(torch.load(model_path, weights_only=True))
+        # Map for key and boot types
+        self.key_mapping = {"RED": 0, "BLUE": 1, "YELLOW": 2, "GREEN": 3}
+        self.boot_mapping = {"WATER": 0, "FIRE": 1, "FORCE": 2}
+
+    def load_model(self, model_path):
+        # First examine the model architecture
+        state_dict = torch.load(model_path, map_location=torch.device("cpu"))
+
+        # Initialize model with the correct architecture
+        model = BehaviorCloningModelLv2(209, 4)
+
+        # Load the weights
+        model.load_state_dict(state_dict)
+        print(f"Successfully loaded model from {model_path}")
         return model
 
     def calculate_normalization_stats(self):
         """Calculate statistics for feature normalization"""
-        # Extract grid dimensions from first sample
-        self.grid_height = 13
-        self.grid_width = 13
+        # Extract grid dimensions from tile_world
+        self.grid_height = self.tile_world.height
+        self.grid_width = self.tile_world.width
 
         # Initialize normalization ranges
-        self.position_max = 13
-        self.chip_max = 2
-
-    def __len__(self):
-        return len(self.data)
+        self.position_max = max(self.grid_height, self.grid_width)
+        self.chip_max = (
+            self.tile_world.total_chips
+            if hasattr(self.tile_world, "total_chips")
+            else 2
+        )
 
     def get_state_vector(self):
+        """Create a comprehensive state vector for the model"""
         # Get comprehensive state from parent class
         state = super().get_state()
 
@@ -423,59 +620,54 @@ class BehaviorClonedAgentLv2(Player):
             [int(state["socket_unlocked"])], dtype=torch.float32
         )
         nearest_chip = torch.tensor(state["nearest_chip"], dtype=torch.float32)
+        nearest_key = torch.tensor(state["nearest_key"], dtype=torch.float32)
+        nearest_boot = torch.tensor(state["nearest_boot"], dtype=torch.float32)
         exit_location = torch.tensor(state["exit_position"], dtype=torch.float32)
 
         # Process key and boot information
         # Convert dictionary form to binary features
-        key_features = torch.zeros(4)  # RED, BLUE, GREEN, YELLOW
-        boot_features = torch.zeros(3)  # WATER, FIRE, FORCE
+        # Keys and boots (encode as one-hot vectors)
+        keys_tensor = torch.zeros(4, dtype=torch.float32)  # RED, BLUE, YELLOW, GREEN
+        if state["collected_keys"]:
+            for key in state["collected_keys"]:
+                if key in self.key_mapping:
+                    keys_tensor[self.key_mapping[key]] = 1
 
-        # Process keys if available
-        if "collected_keys" in state and state["collected_keys"]:
-            keys_dict = state["collected_keys"]
-            if "RED" in keys_dict and keys_dict["RED"]:
-                key_features[0] = 1.0
-            if "BLUE" in keys_dict and keys_dict["BLUE"]:
-                key_features[1] = 1.0
-            if "GREEN" in keys_dict and keys_dict["GREEN"]:
-                key_features[2] = 1.0
-            if "YELLOW" in keys_dict and keys_dict["YELLOW"]:
-                key_features[3] = 1.0
+        boots_tensor = torch.zeros(3, dtype=torch.float32)  # WATER, FIRE, FORCE
+        if state["collected_boots"]:
+            for boot in state["collected_boots"]:
+                if boot in self.boot_mapping:
+                    boots_tensor[self.boot_mapping[boot]] = 1
 
-        # Process boots if available
-        if "collected_boots" in state and state["collected_boots"]:
-            boots_dict = state["collected_boots"]
-            if "WATER" in boots_dict and boots_dict["WATER"]:
-                boot_features[0] = 1.0
-            if "FIRE" in boots_dict and boots_dict["FIRE"]:
-                boot_features[1] = 1.0
-            if "FORCE" in boots_dict and boots_dict["FORCE"]:
-                boot_features[2] = 1.0
-
-        # Process the full grid
+        # Process the full grid - convert tile types to their IDs
         full_grid = []
         for row in state["full_grid"]:
             processed_row = []
             for tile_type in row:
-                # Map to integer using the updated tile definitions
-                tile_id = self.tile_type_to_id.get(tile_type, 1)
+                # Map to integer using the tile_type_to_id mapping
+                tile_id = self.tile_type_to_id.get(
+                    tile_type, self.tile_type_to_id.get("WALL", 1)
+                )
                 processed_row.append(tile_id)
             full_grid.append(processed_row)
 
         full_grid_tensor = torch.tensor(full_grid, dtype=torch.float32)
 
-        # Process the local grid
+        # Process the local grid - convert tile types to their IDs
         local_grid = []
         for row in state["local_grid"]:
-            processed_row = []
+            grid_row = []
             for tile_type in row:
-                # Map to integer using the updated tile definitions
-                tile_id = self.tile_type_to_id.get(tile_type, 1)
-                processed_row.append(tile_id)
-            local_grid.append(processed_row)
+                # Default to WALL if type not in mapping
+                tile_value = self.tile_type_to_id.get(tile_type, 1)
+                grid_row.append(tile_value)
+            local_grid.append(grid_row)
+        local_grid_tensor = torch.tensor(local_grid, dtype=torch.float32).flatten()
 
-        local_grid_tensor = torch.tensor(local_grid, dtype=torch.float32)
+        # Augmented local grid. To large
+        # local_grid_tensor = torch.tensor(state["local_grid"], dtype=torch.float32)
 
+        # Normalize grid values if enabled
         if self.normalize_features:
             max_tile_id = max(self.tile_type_to_id.values())
             full_grid_tensor = full_grid_tensor / max_tile_id
@@ -495,6 +687,26 @@ class BehaviorClonedAgentLv2(Player):
         other_player_pos = torch.tensor(
             state.get("other_player_position", [-1, -1]), dtype=torch.float32
         )
+        player_id = torch.tensor([state["player_id"]], dtype=torch.float32)
+
+        # Time information
+        time_elapsed = torch.tensor(
+            [state["time_elapsed"] / 1000] if "time_elapsed" in state else [0],
+            dtype=torch.float32,
+        )  # Normalize to seconds
+
+        # Goal position information
+        goal_pos = torch.tensor(
+            state["goal_pos"] if "goal_pos" in state else [-1, -1], dtype=torch.float32
+        )
+
+        # Other player information
+        other_player_chips = torch.tensor(
+            [state["other_player_collected_chips"]]
+            if "other_player_collected_chips" in state
+            else [0],
+            dtype=torch.float32,
+        )
 
         # Normalize position-based features if enabled
         if self.normalize_features:
@@ -512,44 +724,78 @@ class BehaviorClonedAgentLv2(Player):
         # Concatenate all state information into a single vector
         state_vector = torch.cat(
             [
-                position,  # 2
-                chips_collected,  # 1
-                total_chips_collected,  # 1
-                socket_unlocked,  # 1
-                nearest_chip,  # 2
-                exit_location,  # 2
-                key_features,  # 4 (RED, BLUE, GREEN, YELLOW)
-                boot_features,  # 3 (WATER, FIRE, FORCE)
-                full_grid_tensor.flatten(),  # grid_height * grid_width
-                local_grid_tensor.flatten(),
-                is_sliding,  # 1
-                is_being_forced,  # 1
-                alive,  # 1
-                remaining_chips,  # 1
-                other_player_pos,  # 2
+                position,  # 2 values
+                chips_collected,  # 1 value
+                total_chips_collected,  # 1 value
+                socket_unlocked,  # 1 value
+                nearest_chip,  # 2 values
+                nearest_key,
+                nearest_boot,
+                exit_location,  # 2 values
+                full_grid_tensor.flatten(),  # grid_height * grid_width values
+                local_grid_tensor.flatten(),  # 5*5 = 25 values for local grid
+                is_sliding,  # 1 value
+                is_being_forced,  # 1 value
+                alive,  # 1 value
+                remaining_chips,  # 1 value
+                other_player_pos,  # 2 values
+                player_id,
+                keys_tensor,
+                boots_tensor,
+                time_elapsed,
+                goal_pos,
+                other_player_chips,
             ]
         )
 
+        # Debug information if needed
+        if self.debug_mode:
+            print(f"State vector shape: {state_vector.shape}")
+
+        # Add batch dimension for model input
         return state_vector.unsqueeze(0)
 
     def predict_action(self):
-        """Prediction using BC model"""
+        """Predict the next action using the behavior cloning model"""
+
         with torch.no_grad():
+            # Get the state vector
             state_vector = self.get_state_vector()
+
+            # Forward pass through the model
             output = self.model(state_vector)
-            action_idx = torch.argmax(output).item()
-        return self.action_mapping[action_idx]
+
+            # Get the action with highest probability
+            action_idx = torch.argmax(output, dim=1).item()
+
+            # Debug information if needed
+            if self.debug_mode:
+                probs = F.softmax(output, dim=1)
+                print(f"Action probabilities: {probs}")
+                print(f"Selected action: {self.action_mapping[action_idx]}")
+
+            return self.action_mapping[action_idx]
 
     def step(self):
-        """Choose and execute an action after cooldown period"""
+        """Execute an action after cooldown period"""
+        # Check if it's time to take another action
         current_time = pygame.time.get_ticks()
         if current_time - self.last_step_time < self.cooldown:
-            return
+            return  # Still in cooldown period
 
+        # Update the cooldown timestamp
         self.last_step_time = current_time
+
+        # If agent is being forced or sliding, don't make a decision
+        if self.is_being_forced or self.is_sliding:
+            return
 
         # Predict the next action
         action = self.predict_action()
+
+        # print(action)
+
+        # Movement mappings
         valid_movement = {
             "UP": (0, -1),
             "DOWN": (0, 1),
@@ -557,9 +803,157 @@ class BehaviorClonedAgentLv2(Player):
             "RIGHT": (1, 0),
         }
 
+        # Execute the action if it's a directional movement
         if action in valid_movement:
             dx, dy = valid_movement[action]
             self.direction = action
             self.process_move(dx, dy)
+
+
+class RLAgent(Player):
+    def __init__(
+        self,
+        x,
+        y,
+        tile_world,
+        game,
+        player_id,
+        model_path=None,
+        is_train=False,
+        alignment=None,
+    ):
+        super().__init__(x, y, tile_world, game, player_id)
+
+        # For trained models that will be deployed (not during training)
+        self.sb3_model = None
+        if model_path and not is_train:
+            from stable_baselines3 import PPO
+
+            self.sb3_model = PPO.load(model_path)
+
+        # Create reverse mapping (tile_type -> ID) from TILE_MAPPING
+        self.tile_type_to_id = {}
+        for tile_id, (tile_type, _, _, _, _) in TILE_MAPPING.items():
+            self.tile_type_to_id[tile_type] = tile_id
+
+        self.action_mapping = {0: "UP", 1: "DOWN", 2: "LEFT", 3: "RIGHT"}
+        self.reverse_action_mapping = {"UP": 0, "DOWN": 1, "LEFT": 2, "RIGHT": 3}
+        self.cooldown = 500  # 500ms
+        self.last_step_time = pygame.time.get_ticks()
+        self.is_train = is_train
+        self.set_child_attribute(self.is_train)  # Pass child's attribute to parent
+
+        # Initialize tracking variables for reward calculation
+        self.prev_collected_chips = 0
+        self.prev_position = (self.x, self.y)
+        self.stuck_count = 0
+
+    def get_state_vector(self):
+        """Convert player state to tensor format (same format as BehaviorClonedAgent)"""
+        # Get comprehensive state from parent class
+        state = super().get_state()
+
+        # Process the full grid
+        # full_grid = []
+        # for row in state["full_grid"]:
+        #     processed_row = []
+        #     for tile_type in row:
+        #         # Map to integer using the updated tile definitions
+        #         processed_row.append(self.tile_type_to_id.get(tile_type, 1))
+        #     full_grid.append(processed_row)
+        # full_grid_tensor = torch.tensor(full_grid, dtype=torch.float32)
+
+        # Process the local grid
+        local_grid = []
+        for row in state["local_grid"]:
+            processed_row = []
+            for tile_type in row:
+                # Map to integer using the updated tile definitions
+                processed_row.append(self.tile_type_to_id.get(tile_type, 1))
+            local_grid.append(processed_row)
+        local_grid_tensor = torch.tensor(local_grid, dtype=torch.float32)
+
+        # Convert all components to tensors in the exact order expected by the model
+        position = torch.tensor(state["position"], dtype=torch.float32)
+        chips_collected = torch.tensor(
+            [state["player_collected_chips"]], dtype=torch.float32
+        )
+        total_chips_collected = torch.tensor(
+            [state["total_collected_chips"]], dtype=torch.float32
+        )
+        socket_unlocked = torch.tensor(
+            [int(state["socket_unlocked"])], dtype=torch.float32
+        )
+        nearest_chip = torch.tensor(state["nearest_chip"], dtype=torch.float32)
+        chip_positions = torch.tensor(state["chip_positions"], dtype=torch.float32)
+        exit_location = torch.tensor(state["exit_position"], dtype=torch.float32)
+        alive = torch.tensor([float(state["alive"])], dtype=torch.float32)
+        remaining_chips = torch.tensor([state["remaining_chips"]], dtype=torch.float32)
+        other_player_pos = torch.tensor(
+            state.get("other_player_position", [-1, -1]), dtype=torch.float32
+        )
+
+        # Concatenate all features
+        state_vector = torch.cat(
+            [
+                position,
+                chips_collected,
+                total_chips_collected,
+                socket_unlocked,
+                nearest_chip,
+                chip_positions.flatten(),
+                exit_location,
+                # full_grid_tensor.flatten(),
+                local_grid_tensor.flatten(),
+                alive,
+                remaining_chips,
+                other_player_pos,
+            ]
+        )
+
+        return state_vector
+
+    def predict_action(self):
+        """Use trained SB3 model to predict action (used during deployment)"""
+        if self.sb3_model:
+            with torch.no_grad():
+                # Get state vector without batch dimension
+                state_vector = self.get_state_vector().numpy()
+                # Use SB3 model to predict
+                action, _ = self.sb3_model.predict(state_vector, deterministic=True)
+                return self.action_mapping[action.item()]
+
+    def step(self, action=None):
+        """Execute step with either provided action or model-predicted action"""
+        if not self.is_train:
+            # During deployment, check cooldown
+            current_time = pygame.time.get_ticks()
+            if current_time - self.last_step_time < self.cooldown:
+                return
+            self.last_step_time = current_time
+
+            # If no explicit action provided, use model prediction
+            if action is None:
+                action = self.predict_action()
+
+        # Map action string to movement
+        movement = {
+            "UP": (0, -1),
+            "DOWN": (0, 1),
+            "LEFT": (-1, 0),
+            "RIGHT": (1, 0),
+        }
+
+        if action in movement:
+            dx, dy = movement[action]
+            self.direction = action
+            self.process_move(dx, dy)
+
+        # Update tracking variables for reward calculation
+        self.prev_collected_chips = self.collected_chips
+        new_position = (self.x, self.y)
+        if new_position == self.prev_position:
+            self.stuck_count += 1
         else:
-            pass
+            self.stuck_count = 0
+        self.prev_position = new_position

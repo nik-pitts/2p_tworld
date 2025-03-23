@@ -22,19 +22,18 @@ class BehaviorCloningModel(nn.Module):
 
 
 # FNC Network for behavior cloning
+# FNC Network for behavior cloning
 class BehaviorCloningModelLv2(nn.Module):
     def __init__(self, input_size, output_size):
         super(BehaviorCloningModelLv2, self).__init__()
         self.fc = nn.Sequential(
-            nn.Linear(input_size, 256),
+            nn.Linear(input_size, 128),
             nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(256, 256),
+            nn.Linear(128, 128),
             nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            nn.Linear(256, output_size),
+            nn.Linear(128, output_size),
         )
 
     def forward(self, x):

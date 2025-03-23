@@ -183,7 +183,7 @@ def parse_args():
         "--timesteps", type=int, default=200000, help="Total timesteps to train"
     )
     parser.add_argument(
-        "--learning-rate", type=float, default=0.0001, help="Learning rate"
+        "--learning-rate", type=float, default=0.001, help="Learning rate"
     )
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
@@ -282,6 +282,9 @@ def main():
         learning_rate=args.learning_rate,
         policy_kwargs=policy_kwargs,
         verbose=1,
+        batch_size=64,
+        ent_coef=0.01,  # Encourage exploration
+        clip_range=0.2,
     )
 
     # Create wandb callback

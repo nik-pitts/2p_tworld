@@ -19,8 +19,12 @@ class GymEnv(gym.Env):
             p2_bc_model_path=p2_bc_model_path,
         )
 
+        self.game.load_game()
+
         # Get initial observation to determine space dimensions
-        initial_obs = self.game.reset()
+        initial_obs = self.game._get_observation()
+
+        print(f"Initial observation shape: {initial_obs.shape}")
 
         # Define action and observation spaces
         self.action_space = spaces.Discrete(4)  # UP, DOWN, LEFT, RIGHT
@@ -45,20 +49,12 @@ class GymEnv(gym.Env):
     def step(self, action):
         """
         Take a step in the environment
-        action: Integer 0-3 representing agent1's action
-        agent2 uses its own BC policy for actions
+        action: Integer 0-4 representing agent2's action
+        agent1 uses its own BC policy for actions
         """
-        observation, reward, done, info = self.game.step(action)
+        observation, reward, terminated, truncated, info = self.game.step(action)
 
-        # if done:
-        #     print("######### INSPECT OUTPUT #########")
-        #     print(
-        #         f"Player 1 collected chips: {info['p1_chips_collected']}, Player 2 colledcted chips: {info['p2_chips_collected']}"
-        #     )
-        #     print(f"Game Over? {info['level_complete']}")
-        #     print(f"Level Complete? {info['level_complete']}")
-
-        return observation, reward, done, False, info
+        return observation, reward, terminated, truncated, info
 
     def close(self):
         """Clean up resources"""
